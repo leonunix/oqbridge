@@ -17,6 +17,18 @@ type Checkpoint struct {
 	Migrated   int64     `json:"migrated"`
 	SlicesDone []int     `json:"slices_done"`
 	Completed  bool      `json:"completed"`
+	// CutoffTime is the upper bound of the time range for this migration run
+	// (i.e., now - migrate_after_days at the time the run started).
+	CutoffTime time.Time `json:"cutoff_time,omitempty"`
+}
+
+// Watermark records the high-water mark for incremental migration.
+// After a successful run, we persist the cutoff time so the next run
+// only processes the delta (new data that crossed the threshold).
+type Watermark struct {
+	Index          string    `json:"index"`
+	MigratedBefore time.Time `json:"migrated_before"` // Upper bound of last successful migration.
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // CheckpointStore manages checkpoint persistence.
@@ -97,4 +109,39 @@ func (cp *Checkpoint) IsSliceDone(sliceID int) bool {
 		}
 	}
 	return false
+}
+
+func (s *CheckpointStore) watermarkPath(index string) string {
+	safe := filepath.Base(index)
+	return filepath.Join(s.dir, safe+".watermark.json")
+}
+
+// LoadWatermark reads the watermark for the given index.
+// Returns nil if no watermark exists (first run).
+func (s *CheckpointStore) LoadWatermark(index string) (*Watermark, error) {
+	data, err := os.ReadFile(s.watermarkPath(index))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading watermark: %w", err)
+	}
+	var wm Watermark
+	if err := json.Unmarshal(data, &wm); err != nil {
+		return nil, fmt.Errorf("parsing watermark: %w", err)
+	}
+	return &wm, nil
+}
+
+// SaveWatermark persists the watermark to disk after a successful migration.
+func (s *CheckpointStore) SaveWatermark(wm *Watermark) error {
+	wm.UpdatedAt = time.Now().UTC()
+	data, err := json.MarshalIndent(wm, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling watermark: %w", err)
+	}
+	if err := os.WriteFile(s.watermarkPath(wm.Index), data, 0644); err != nil {
+		return fmt.Errorf("writing watermark: %w", err)
+	}
+	return nil
 }

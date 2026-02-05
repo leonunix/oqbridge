@@ -109,7 +109,8 @@ cp configs/oqbridge.yaml oqbridge.yaml
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `migration.schedule` | `0 2 * * *` | Cron 调度表达式（守护模式） |
+| `migration.schedule` | `0 * * * *` | Cron 调度表达式（守护模式） |
+| `migration.migrate_after_days` | `retention.days - 5` | 迁移超过此天数的数据（必须 < `retention.days`） |
 | `migration.batch_size` | `5000` | 每批 scroll 文档数 |
 | `migration.workers` | `4` | 并行 sliced scroll worker 数 |
 | `migration.compress` | `true` | 启用 Gzip 压缩传输 |

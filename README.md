@@ -109,7 +109,8 @@ See [configs/oqbridge.yaml](configs/oqbridge.yaml) for the full configuration re
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `migration.schedule` | `0 2 * * *` | Cron schedule (daemon mode) |
+| `migration.schedule` | `0 * * * *` | Cron schedule (daemon mode) |
+| `migration.migrate_after_days` | `retention.days - 5` | Migrate data older than this (must be < `retention.days`) |
 | `migration.batch_size` | `5000` | Documents per scroll batch |
 | `migration.workers` | `4` | Parallel sliced scroll workers |
 | `migration.compress` | `true` | Gzip compress data to Quickwit |

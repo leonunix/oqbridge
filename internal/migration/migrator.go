@@ -75,10 +75,21 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 		slog.Warn("failed to load checkpoint, starting fresh", "index", index, "error", err)
 	}
 
+	migrateDays := m.cfg.Migration.MigrateAfterDays
+	cutoffTime := time.Now().UTC().AddDate(0, 0, -migrateDays)
+
+	// Load watermark from last successful run for incremental migration.
+	wm, wmErr := m.checkpoint.LoadWatermark(index)
+	if wmErr != nil {
+		slog.Warn("failed to load watermark, will migrate all old data", "index", index, "error", wmErr)
+	}
+
 	slog.Info("starting migration",
 		"index", index,
 		"timestamp_field", tsField,
-		"retention_days", m.cfg.Retention.Days,
+		"migrate_after_days", migrateDays,
+		"cutoff", cutoffTime.Format(time.RFC3339),
+		"watermark", watermarkStr(wm),
 		"workers", workers,
 		"batch_size", batchSize,
 		"resuming", cp != nil,
@@ -104,8 +115,12 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 	}
 	var cpMu sync.Mutex
 
-	// Build the base query for documents older than retention.
-	query := buildOldDataQuery(tsField, m.cfg.Retention.Days, batchSize)
+	// Build the query for the incremental time window.
+	var fromTime *time.Time
+	if wm != nil && !wm.MigratedBefore.IsZero() {
+		fromTime = &wm.MigratedBefore
+	}
+	query := buildMigrationQuery(tsField, fromTime, cutoffTime, batchSize)
 	queryBytes, err := json.Marshal(query)
 	if err != nil {
 		return fmt.Errorf("marshaling migration query: %w", err)
@@ -161,15 +176,21 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 			"index", index,
 			"count", totalMigrated,
 		)
-		deleteQuery := buildOldDataDeleteQuery(tsField, m.cfg.Retention.Days)
+		deleteQuery := buildMigrationDeleteQuery(tsField, fromTime, cutoffTime)
 		deleteBytes, _ := json.Marshal(deleteQuery)
 		if err := m.hot.DeleteByQuery(ctx, index, deleteBytes); err != nil {
 			return fmt.Errorf("deleting migrated documents: %w", err)
 		}
 	}
 
-	// Mark checkpoint as completed.
+	// Mark checkpoint as completed and save watermark for next incremental run.
 	m.checkpoint.MarkComplete(index)
+	if err := m.checkpoint.SaveWatermark(&Watermark{
+		Index:          index,
+		MigratedBefore: cutoffTime,
+	}); err != nil {
+		slog.Warn("failed to save watermark", "index", index, "error", err)
+	}
 
 	elapsed := time.Since(progress.StartTime)
 	slog.Info("migration completed",
@@ -265,7 +286,16 @@ func (m *Migrator) reportProgress(progress *Progress, stop <-chan struct{}, tick
 	}
 }
 
-func buildOldDataQuery(tsField string, retentionDays, size int) map[string]interface{} {
+// buildMigrationQuery builds a scroll query for the incremental time window.
+// If fromTime is nil, it migrates all data older than cutoff (first run).
+// Otherwise it migrates data in [fromTime, cutoff).
+func buildMigrationQuery(tsField string, fromTime *time.Time, cutoff time.Time, size int) map[string]interface{} {
+	rangeClause := map[string]interface{}{
+		"lt": cutoff.Format(time.RFC3339),
+	}
+	if fromTime != nil {
+		rangeClause["gte"] = fromTime.Format(time.RFC3339)
+	}
 	return map[string]interface{}{
 		"size": size,
 		"sort": []map[string]string{
@@ -273,22 +303,32 @@ func buildOldDataQuery(tsField string, retentionDays, size int) map[string]inter
 		},
 		"query": map[string]interface{}{
 			"range": map[string]interface{}{
-				tsField: map[string]interface{}{
-					"lt": fmt.Sprintf("now-%dd", retentionDays),
-				},
+				tsField: rangeClause,
 			},
 		},
 	}
 }
 
-func buildOldDataDeleteQuery(tsField string, retentionDays int) map[string]interface{} {
+// buildMigrationDeleteQuery builds a delete-by-query for the same time window.
+func buildMigrationDeleteQuery(tsField string, fromTime *time.Time, cutoff time.Time) map[string]interface{} {
+	rangeClause := map[string]interface{}{
+		"lt": cutoff.Format(time.RFC3339),
+	}
+	if fromTime != nil {
+		rangeClause["gte"] = fromTime.Format(time.RFC3339)
+	}
 	return map[string]interface{}{
 		"query": map[string]interface{}{
 			"range": map[string]interface{}{
-				tsField: map[string]interface{}{
-					"lt": fmt.Sprintf("now-%dd", retentionDays),
-				},
+				tsField: rangeClause,
 			},
 		},
 	}
+}
+
+func watermarkStr(wm *Watermark) string {
+	if wm == nil || wm.MigratedBefore.IsZero() {
+		return "none (first run)"
+	}
+	return wm.MigratedBefore.Format(time.RFC3339)
 }

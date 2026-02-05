@@ -30,7 +30,8 @@ retention:
 # Migration settings (used by oqbridge-migrate only, ignored by the proxy)
 migration:
   enabled: true
-  schedule: "0 2 * * *"      # Cron schedule (daemon mode)
+  schedule: "0 * * * *"       # Cron schedule (daemon mode) — every hour
+  migrate_after_days: 25      # Migrate data older than this (must be < retention.days)
   batch_size: 5000            # Documents per scroll batch
   workers: 4                  # Parallel sliced scroll workers
   compress: true              # Gzip compress data sent to Quickwit

@@ -14,7 +14,8 @@
       "Bash(git check-ignore:*)",
       "Bash(git -c user.name=\"Leon\" -c user.email=\"leon.unix@gmail.com\" commit -m \"$\\(cat <<''EOF''\nAdd example configuration file\n\nFix .gitignore pattern to only ignore root-level oqbridge.yaml,\nallowing configs/oqbridge.yaml to be tracked.\nEOF\n\\)\")",
       "Bash(git push:*)",
-      "Bash(git -c user.name=\"Leon\" -c user.email=\"leon.unix@gmail.com\" commit -m \"$\\(cat <<''EOF''\nAdd MIT license\nEOF\n\\)\")"
+      "Bash(git -c user.name=\"Leon\" -c user.email=\"leon.unix@gmail.com\" commit -m \"$\\(cat <<''EOF''\nAdd MIT license\nEOF\n\\)\")",
+      "Bash(go build:*)"
     ]
   }
 }

@@ -44,6 +44,7 @@ type RetentionConfig struct {
 type MigrationConfig struct {
 	Enabled              bool     `koanf:"enabled"`
 	Schedule             string   `koanf:"schedule"`
+	MigrateAfterDays     int      `koanf:"migrate_after_days"`   // Migrate data older than this many days. Must be < retention.days.
 	BatchSize            int      `koanf:"batch_size"`
 	Workers              int      `koanf:"workers"`              // Number of parallel sliced scroll workers.
 	Compress             bool     `koanf:"compress"`             // Gzip compress data sent to Quickwit.
@@ -103,8 +104,14 @@ func setDefaults(cfg *Config) {
 	if cfg.Migration.Workers <= 0 {
 		cfg.Migration.Workers = 4
 	}
+	if cfg.Migration.MigrateAfterDays <= 0 {
+		cfg.Migration.MigrateAfterDays = cfg.Retention.Days - 5
+		if cfg.Migration.MigrateAfterDays <= 0 {
+			cfg.Migration.MigrateAfterDays = cfg.Retention.Days
+		}
+	}
 	if cfg.Migration.Schedule == "" {
-		cfg.Migration.Schedule = "0 2 * * *"
+		cfg.Migration.Schedule = "0 * * * *"
 	}
 	if cfg.Migration.CheckpointDir == "" {
 		cfg.Migration.CheckpointDir = "/var/lib/oqbridge"
@@ -127,6 +134,10 @@ func validate(cfg *Config) error {
 	}
 	if _, err := url.Parse(cfg.Quickwit.URL); err != nil {
 		return fmt.Errorf("invalid quickwit.url: %w", err)
+	}
+
+	if cfg.Migration.MigrateAfterDays >= cfg.Retention.Days {
+		return fmt.Errorf("migration.migrate_after_days (%d) must be less than retention.days (%d)", cfg.Migration.MigrateAfterDays, cfg.Retention.Days)
 	}
 
 	return nil
