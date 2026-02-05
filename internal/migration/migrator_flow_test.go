@@ -118,6 +118,14 @@ func (f *fakeCold) BulkIngest(_ context.Context, index string, docs []json.RawMe
 	return nil
 }
 
+func (f *fakeCold) IndexExists(_ context.Context, _ string) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeCold) CreateIndex(_ context.Context, _ string, _ string) error {
+	return nil
+}
+
 func makeHits(sliceID int, n int) []json.RawMessage {
 	hits := make([]json.RawMessage, 0, n)
 	for i := 0; i < n; i++ {

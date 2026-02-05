@@ -66,6 +66,12 @@ func (m *Migrator) MigrateAll(ctx context.Context) error {
 // OpenSearch to Quickwit using parallel sliced scroll workers.
 func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 	tsField := m.cfg.TimestampFieldForIndex(index)
+
+	// Ensure Quickwit index exists before migration.
+	if err := m.ensureQuickwitIndex(ctx, index, tsField); err != nil {
+		return fmt.Errorf("ensuring quickwit index: %w", err)
+	}
+
 	workers := m.cfg.Migration.Workers
 	batchSize := m.cfg.Migration.BatchSize
 
@@ -331,4 +337,21 @@ func watermarkStr(wm *Watermark) string {
 		return "none (first run)"
 	}
 	return wm.MigratedBefore.Format(time.RFC3339)
+}
+
+// ensureQuickwitIndex checks if the index exists in Quickwit and creates it if not.
+func (m *Migrator) ensureQuickwitIndex(ctx context.Context, index, tsField string) error {
+	exists, err := m.cold.IndexExists(ctx, index)
+	if err != nil {
+		return fmt.Errorf("checking index existence: %w", err)
+	}
+	if exists {
+		slog.Info("quickwit index already exists", "index", index)
+		return nil
+	}
+	slog.Info("creating quickwit index", "index", index, "timestamp_field", tsField)
+	if err := m.cold.CreateIndex(ctx, index, tsField); err != nil {
+		return fmt.Errorf("creating index: %w", err)
+	}
+	return nil
 }

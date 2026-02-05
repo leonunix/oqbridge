@@ -17,4 +17,6 @@ type HotClient interface {
 // ColdClient is the subset of Quickwit operations needed by Migrator.
 type ColdClient interface {
 	BulkIngest(ctx context.Context, index string, docs []json.RawMessage) error
+	IndexExists(ctx context.Context, index string) (bool, error)
+	CreateIndex(ctx context.Context, index string, timestampField string) error
 }

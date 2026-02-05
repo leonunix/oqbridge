@@ -147,3 +147,76 @@ func (q *Quickwit) setAuth(req *http.Request) {
 		req.SetBasicAuth(q.username, q.password)
 	}
 }
+
+// IndexExists checks if an index exists in Quickwit.
+func (q *Quickwit) IndexExists(ctx context.Context, index string) (bool, error) {
+	url := fmt.Sprintf("%s/api/v1/indexes/%s", q.baseURL, index)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, fmt.Errorf("creating index exists request: %w", err)
+	}
+	q.setAuth(req)
+
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("executing index exists request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return false, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
+	}
+	return true, nil
+}
+
+// CreateIndex creates a new index in Quickwit with dynamic schema mode.
+func (q *Quickwit) CreateIndex(ctx context.Context, index string, timestampField string) error {
+	indexConfig := map[string]interface{}{
+		"version":  "0.8",
+		"index_id": index,
+		"doc_mapping": map[string]interface{}{
+			"mode":            "dynamic",
+			"timestamp_field": timestampField,
+		},
+		"indexing_settings": map[string]interface{}{
+			"commit_timeout_secs": 60,
+		},
+	}
+
+	body, err := json.Marshal(indexConfig)
+	if err != nil {
+		return fmt.Errorf("marshaling index config: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/indexes", q.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating create index request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	q.setAuth(req)
+
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("executing create index request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
+	}
+	return nil
+}

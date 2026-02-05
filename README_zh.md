@@ -43,6 +43,7 @@ OpenSearch 节点                          远端
 
 ### 迁移 (`oqbridge-migrate`)
 
+- **自动创建索引** — 迁移前自动在 Quickwit 中创建索引，使用动态（schemaless）模式，无需预定义 schema。
 - **并行 Sliced Scroll** — 多个 worker 使用 sliced scroll API 并发读取 OpenSearch。
 - **Gzip 压缩** — 压缩传输到 Quickwit 的数据（大数据量下显著节省带宽）。
 - **断点续传** — 中断的迁移自动从上次完成的 slice 恢复。

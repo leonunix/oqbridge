@@ -103,3 +103,91 @@ func TestQuickwit_Search_Non2xxReturnsHTTPStatusError(t *testing.T) {
 		t.Fatalf("StatusCode=%d, want %d", httpErr.StatusCode, http.StatusUnauthorized)
 	}
 }
+
+func TestQuickwit_IndexExists_Found(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/indexes/logs" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"index_id":"logs"}`))
+	}))
+	defer srv.Close()
+
+	qw := NewQuickwit(srv.URL, "", "", false)
+	exists, err := qw.IndexExists(context.Background(), "logs")
+	if err != nil {
+		t.Fatalf("IndexExists: %v", err)
+	}
+	if !exists {
+		t.Fatalf("expected index to exist")
+	}
+}
+
+func TestQuickwit_IndexExists_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	qw := NewQuickwit(srv.URL, "", "", false)
+	exists, err := qw.IndexExists(context.Background(), "logs")
+	if err != nil {
+		t.Fatalf("IndexExists: %v", err)
+	}
+	if exists {
+		t.Fatalf("expected index to not exist")
+	}
+}
+
+func TestQuickwit_CreateIndex_Success(t *testing.T) {
+	var receivedBody map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/indexes" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		json.NewDecoder(r.Body).Decode(&receivedBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	qw := NewQuickwit(srv.URL, "", "", false)
+	if err := qw.CreateIndex(context.Background(), "logs", "@timestamp"); err != nil {
+		t.Fatalf("CreateIndex: %v", err)
+	}
+
+	if receivedBody["index_id"] != "logs" {
+		t.Fatalf("index_id=%v, want logs", receivedBody["index_id"])
+	}
+	docMapping := receivedBody["doc_mapping"].(map[string]interface{})
+	if docMapping["mode"] != "dynamic" {
+		t.Fatalf("mode=%v, want dynamic", docMapping["mode"])
+	}
+	if docMapping["timestamp_field"] != "@timestamp" {
+		t.Fatalf("timestamp_field=%v, want @timestamp", docMapping["timestamp_field"])
+	}
+}
+
+func TestQuickwit_CreateIndex_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"index already exists"}`))
+	}))
+	defer srv.Close()
+
+	qw := NewQuickwit(srv.URL, "", "", false)
+	err := qw.CreateIndex(context.Background(), "logs", "@timestamp")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var httpErr *HTTPStatusError
+	if !errors.As(err, &httpErr) {
+		t.Fatalf("expected HTTPStatusError, got %T: %v", err, err)
+	}
+}

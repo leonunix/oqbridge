@@ -43,6 +43,7 @@ Client ──► oqbridge (proxy) ──┬──► OpenSearch  (hot, <30d)
 
 ### Migration (`oqbridge-migrate`)
 
+- **Auto index creation** — Automatically creates Quickwit indices using dynamic (schemaless) mode before migration. No need to pre-define schemas.
 - **Parallel sliced scroll** — Multiple workers read from OpenSearch concurrently using sliced scroll API.
 - **Gzip compression** — Compress data over the network to Quickwit (significant savings for large volumes).
 - **Checkpoint/resume** — Interrupted migrations automatically resume from the last completed slice.
