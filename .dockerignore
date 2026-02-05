@@ -1,0 +1,11 @@
+bin/
+.git/
+.github/
+.idea/
+.vscode/
+.claude/
+*.out
+*.prof
+cover.out
+dist/
+container/helm/

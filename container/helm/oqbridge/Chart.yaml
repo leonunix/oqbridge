@@ -1,0 +1,14 @@
+apiVersion: v2
+name: oqbridge
+description: A unified query proxy with automatic hot/cold data tiering for OpenSearch and Quickwit
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - opensearch
+  - quickwit
+  - proxy
+  - data-tiering
+home: https://github.com/leonunix/oqbridge
+sources:
+  - https://github.com/leonunix/oqbridge

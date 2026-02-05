@@ -1,0 +1,70 @@
+{{- if and .Values.migrate.enabled (eq .Values.migrate.mode "deployment") }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "oqbridge.fullname" . }}-migrate
+  labels:
+    {{- include "oqbridge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "oqbridge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: migrate
+  template:
+    metadata:
+      labels:
+        {{- include "oqbridge.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: oqbridge-migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["oqbridge-migrate"]
+          args:
+            - "-config"
+            - "/etc/oqbridge/oqbridge.yaml"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/oqbridge
+              readOnly: true
+            - name: checkpoint
+              mountPath: /var/lib/oqbridge
+          {{- with .Values.migrate.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "oqbridge.fullname" . }}
+        - name: checkpoint
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "oqbridge.fullname" . }}-checkpoint
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.migrate.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.migrate.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.migrate.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

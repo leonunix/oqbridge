@@ -1,0 +1,31 @@
+oqbridge has been deployed.
+
+{{- if .Values.proxy.enabled }}
+
+Proxy:
+  {{- if eq .Values.service.type "LoadBalancer" }}
+  Get the external IP:
+    kubectl get svc {{ include "oqbridge.fullname" . }} -n {{ .Release.Namespace }}
+  {{- else if eq .Values.service.type "NodePort" }}
+  Get the NodePort:
+    export NODE_PORT=$(kubectl get svc {{ include "oqbridge.fullname" . }} -n {{ .Release.Namespace }} -o jsonpath='{.spec.ports[0].nodePort}')
+    echo "http://<NODE_IP>:$NODE_PORT"
+  {{- else }}
+  Access via port-forward:
+    kubectl port-forward svc/{{ include "oqbridge.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.migrate.enabled }}
+
+Migration worker:
+  Mode: {{ .Values.migrate.mode }}
+  {{- if eq .Values.migrate.mode "cronjob" }}
+  Schedule: {{ .Values.migrate.schedule }}
+  {{- end }}
+  {{- if .Values.persistence.enabled }}
+  Checkpoint PVC: {{ include "oqbridge.fullname" . }}-checkpoint ({{ .Values.persistence.size }})
+  {{- else }}
+  WARNING: Persistence is disabled. Checkpoints will be lost on pod restart.
+  {{- end }}
+{{- end }}

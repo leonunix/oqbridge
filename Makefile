@@ -1,4 +1,4 @@
-.PHONY: build build-proxy build-migrate clean test run run-migrate lint
+.PHONY: build build-proxy build-migrate clean test run run-migrate lint docker-build
 
 BUILD_DIR=bin
 
@@ -23,6 +23,9 @@ test:
 
 lint:
 	golangci-lint run ./...
+
+docker-build:
+	bash container/build.sh -t oqbridge:latest
 
 clean:
 	rm -rf $(BUILD_DIR)

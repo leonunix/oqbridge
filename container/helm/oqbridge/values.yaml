@@ -1,0 +1,88 @@
+image:
+  repository: oqbridge
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Proxy (oqbridge) deployment settings
+proxy:
+  enabled: true
+  replicas: 1
+  resources: {}
+    # limits:
+    #   cpu: 500m
+    #   memory: 256Mi
+    # requests:
+    #   cpu: 100m
+    #   memory: 128Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -- Service for the proxy
+service:
+  type: LoadBalancer
+  port: 9200
+
+# -- Migration worker (oqbridge-migrate) settings
+migrate:
+  enabled: true
+  # mode: "cronjob" runs with --once flag on a schedule;
+  # mode: "deployment" runs as a long-lived daemon with built-in cron.
+  mode: cronjob
+  schedule: "0 * * * *"
+  resources: {}
+    # limits:
+    #   cpu: 1000m
+    #   memory: 512Mi
+    # requests:
+    #   cpu: 200m
+    #   memory: 256Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# -- Persistent volume for migration checkpoints and watermarks
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 1Gi
+  accessModes:
+    - ReadWriteOnce
+
+# -- oqbridge configuration (rendered as oqbridge.yaml ConfigMap)
+config:
+  server:
+    listen: ":9200"
+
+  opensearch:
+    url: "http://opensearch:9200"
+    username: ""
+    password: ""
+
+  quickwit:
+    url: "http://quickwit:7280"
+    username: ""
+    password: ""
+
+  retention:
+    days: 30
+    timestamp_field: "@timestamp"
+
+  migration:
+    enabled: true
+    schedule: "0 * * * *"
+    migrate_after_days: 25
+    batch_size: 5000
+    workers: 4
+    compress: true
+    checkpoint_dir: "/var/lib/oqbridge"
+    delete_after_migration: false
+    indices:
+      - "logs-*"
+
+  logging:
+    level: "info"

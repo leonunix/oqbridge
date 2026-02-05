@@ -1,0 +1,67 @@
+{{- if and .Values.migrate.enabled (eq .Values.migrate.mode "cronjob") }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "oqbridge.fullname" . }}-migrate
+  labels:
+    {{- include "oqbridge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+spec:
+  schedule: {{ .Values.migrate.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "oqbridge.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: migrate
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          restartPolicy: OnFailure
+          containers:
+            - name: oqbridge-migrate
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["oqbridge-migrate"]
+              args:
+                - "-config"
+                - "/etc/oqbridge/oqbridge.yaml"
+                - "-once"
+              volumeMounts:
+                - name: config
+                  mountPath: /etc/oqbridge
+                  readOnly: true
+                - name: checkpoint
+                  mountPath: /var/lib/oqbridge
+              {{- with .Values.migrate.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+          volumes:
+            - name: config
+              configMap:
+                name: {{ include "oqbridge.fullname" . }}
+            - name: checkpoint
+              {{- if .Values.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "oqbridge.fullname" . }}-checkpoint
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+          {{- with .Values.migrate.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.migrate.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.migrate.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

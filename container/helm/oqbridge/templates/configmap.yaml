@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "oqbridge.fullname" . }}
+  labels:
+    {{- include "oqbridge.labels" . | nindent 4 }}
+data:
+  oqbridge.yaml: |
+    {{- .Values.config | toYaml | nindent 4 }}
