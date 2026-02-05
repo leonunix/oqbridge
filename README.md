@@ -163,7 +163,7 @@ Both binaries share the same config file format.
 
 ## License
 
-TBD
+[MIT](LICENSE)
 
 ## Contributing
 

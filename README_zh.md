@@ -161,7 +161,7 @@ OpenSearch Dashboards
 
 ## 许可证
 
-待定
+[MIT](LICENSE)
 
 ## 贡献
 
