@@ -44,4 +44,3 @@ func TestCheckpointStore_SaveLoadAndComplete(t *testing.T) {
 		t.Fatalf("expected nil after completion, got %+v", loaded2)
 	}
 }
-

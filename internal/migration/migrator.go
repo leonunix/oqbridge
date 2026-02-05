@@ -15,31 +15,33 @@ import (
 
 // Progress tracks real-time migration progress.
 type Progress struct {
-	Index      string
-	TotalDocs  int64
-	Migrated   atomic.Int64
-	StartTime  time.Time
+	Index     string
+	TotalDocs int64
+	Migrated  atomic.Int64
+	StartTime time.Time
 }
 
 // Migrator handles parallel migration of data from OpenSearch to Quickwit.
 type Migrator struct {
-	cfg        *config.Config
-	hot        *backend.OpenSearch
-	cold       *backend.Quickwit
-	checkpoint *CheckpointStore
+	cfg              *config.Config
+	hot              HotClient
+	cold             ColdClient
+	checkpoint       *CheckpointStore
+	progressInterval time.Duration
 }
 
 // NewMigrator creates a new Migrator.
-func NewMigrator(cfg *config.Config, hot *backend.OpenSearch, cold *backend.Quickwit) (*Migrator, error) {
+func NewMigrator(cfg *config.Config, hot HotClient, cold ColdClient) (*Migrator, error) {
 	cpStore, err := NewCheckpointStore(cfg.Migration.CheckpointDir)
 	if err != nil {
 		return nil, fmt.Errorf("initializing checkpoint store: %w", err)
 	}
 	return &Migrator{
-		cfg:        cfg,
-		hot:        hot,
-		cold:       cold,
-		checkpoint: cpStore,
+		cfg:              cfg,
+		hot:              hot,
+		cold:             cold,
+		checkpoint:       cpStore,
+		progressInterval: 10 * time.Second,
 	}, nil
 }
 
@@ -131,10 +133,12 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 
 	// Start progress reporter.
 	stopProgress := make(chan struct{})
-	go m.reportProgress(progress, stopProgress)
+	ticker := time.NewTicker(m.progressInterval)
+	go m.reportProgress(progress, stopProgress, ticker.C)
 
 	wg.Wait()
 	close(stopProgress)
+	ticker.Stop()
 	close(errCh)
 
 	// Collect errors.
@@ -242,15 +246,12 @@ func (m *Migrator) migrateSlice(ctx context.Context, index string, queryBytes []
 	return nil
 }
 
-func (m *Migrator) reportProgress(progress *Progress, stop chan struct{}) {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
-
+func (m *Migrator) reportProgress(progress *Progress, stop <-chan struct{}, tick <-chan time.Time) {
 	for {
 		select {
 		case <-stop:
 			return
-		case <-ticker.C:
+		case <-tick:
 			migrated := progress.Migrated.Load()
 			elapsed := time.Since(progress.StartTime)
 			rate := float64(migrated) / elapsed.Seconds()

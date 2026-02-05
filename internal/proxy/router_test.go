@@ -10,10 +10,10 @@ func TestRouter_Route(t *testing.T) {
 	router := NewRouter(30)
 
 	now := time.Now().UTC()
-	recentTime := now.Add(-24 * time.Hour).Format(time.RFC3339)           // 1 day ago
-	oldTime := now.Add(-60 * 24 * time.Hour).Format(time.RFC3339)         // 60 days ago
-	veryOldTime := now.Add(-90 * 24 * time.Hour).Format(time.RFC3339)     // 90 days ago
-	boundaryTime := now.Add(-15 * 24 * time.Hour).Format(time.RFC3339)    // 15 days ago
+	recentTime := now.Add(-24 * time.Hour).Format(time.RFC3339)        // 1 day ago
+	oldTime := now.Add(-60 * 24 * time.Hour).Format(time.RFC3339)      // 60 days ago
+	veryOldTime := now.Add(-90 * 24 * time.Hour).Format(time.RFC3339)  // 90 days ago
+	boundaryTime := now.Add(-15 * 24 * time.Hour).Format(time.RFC3339) // 15 days ago
 
 	tests := []struct {
 		name     string

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -19,8 +19,13 @@ import (
 	"github.com/leonunix/oqbridge/internal/config"
 )
 
-// searchPathRe matches /{index}/_search paths.
-var searchPathRe = regexp.MustCompile(`^/([^/]+)/_search$`)
+type endpointKind int
+
+const (
+	endpointNone endpointKind = iota
+	endpointSearch
+	endpointMSearch
+)
 
 // Proxy is the core HTTP handler that routes requests between OpenSearch and Quickwit.
 type Proxy struct {
@@ -66,22 +71,36 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if this is a search request that we should intercept.
-	if matches := searchPathRe.FindStringSubmatch(r.URL.Path); matches != nil {
-		index := matches[1]
-
-		// Skip internal indices (start with .).
-		if !strings.HasPrefix(index, ".") {
-			p.handleSearch(w, r, index)
+	kind, indices := parseEndpoint(r.URL.Path)
+	switch kind {
+	case endpointSearch:
+		// Root /_search: passthrough (no reliable index list for Quickwit fan-out).
+		if len(indices) == 0 {
+			p.reverseProxy.ServeHTTP(w, r)
 			return
 		}
+		// Skip internal indices (start with .) or wildcard patterns.
+		if hasInternalOrWildcard(indices) {
+			p.reverseProxy.ServeHTTP(w, r)
+			return
+		}
+		p.handleSearch(w, r, indices)
+		return
+	case endpointMSearch:
+		// Skip interception if any indices are internal/wildcard.
+		if hasInternalOrWildcard(indices) {
+			p.reverseProxy.ServeHTTP(w, r)
+			return
+		}
+		p.handleMSearch(w, r, indices)
+		return
 	}
 
 	// All other requests: passthrough to OpenSearch (OpenSearch validates auth).
 	p.reverseProxy.ServeHTTP(w, r)
 }
 
-func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, index string) {
+func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, indices []string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
@@ -92,13 +111,11 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, index strin
 	// Restore body for potential passthrough.
 	r.Body = io.NopCloser(bytes.NewReader(body))
 
-	tsField := p.cfg.TimestampFieldForIndex(index)
-	target := p.router.Route(body, tsField)
+	target := p.routeForIndices(body, indices)
 
 	slog.Debug("search routing decision",
-		"index", index,
+		"indices", strings.Join(indices, ","),
 		"target", target.String(),
-		"timestamp_field", tsField,
 	)
 
 	switch target {
@@ -108,6 +125,36 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, index strin
 		return
 
 	case RouteColdOnly:
+		// Single index: passthrough to Quickwit (no merge semantics needed).
+		if len(indices) == 1 {
+			authHeader := r.Header.Get("Authorization")
+			if err := p.authenticateViaOpenSearch(r.Context(), authHeader); err != nil {
+				status := http.StatusBadGateway
+				if authHeader == "" || isAuthError(err) {
+					status = statusFromAuthError(err)
+				}
+				slog.Warn("auth failed for cold-only query", "indices", strings.Join(indices, ","), "status", status, "error", err)
+				http.Error(w, `{"error":"authentication failed"}`, status)
+				return
+			}
+
+			resp, err := p.coldBackend.Search(r.Context(), indices[0], body)
+			if err != nil {
+				slog.Error("quickwit search failed", "error", err)
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				p.reverseProxy.ServeHTTP(w, r)
+				return
+			}
+			writeJSON(w, resp)
+			return
+		}
+
+		fanout, fanoutErr := planFanout(body)
+		if fanoutErr != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"unsupported query for multi-index merge","detail":%q}`, fanoutErr.Error()), http.StatusBadRequest)
+			return
+		}
+
 		// Must validate user auth against OpenSearch first, because Quickwit
 		// has no knowledge of OpenSearch users.
 		authHeader := r.Header.Get("Authorization")
@@ -116,27 +163,33 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, index strin
 			if authHeader == "" || isAuthError(err) {
 				status = statusFromAuthError(err)
 			}
-			slog.Warn("auth failed for cold-only query", "index", index, "status", status, "error", err)
+			slog.Warn("auth failed for cold-only query", "indices", strings.Join(indices, ","), "status", status, "error", err)
 			http.Error(w, `{"error":"authentication failed"}`, status)
 			return
 		}
 
-		resp, err := p.coldBackend.Search(r.Context(), index, body)
+		resp, err := p.searchColdIndices(r.Context(), indices, fanout.Body)
 		if err != nil {
 			slog.Error("quickwit search failed", "error", err)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			p.reverseProxy.ServeHTTP(w, r)
 			return
 		}
-		writeJSON(w, resp)
+		writeJSON(w, MergeSearchResponsesWithOptions(nil, resp, fanout.Merge))
 		return
 
 	case RouteBoth:
+		fanout, fanoutErr := planFanout(body)
+		if fanoutErr != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"unsupported query for cross-tier merge","detail":%q}`, fanoutErr.Error()), http.StatusBadRequest)
+			return
+		}
+
 		// Fan-out: We query both backends in parallel and merge results.
 		// Security: If OpenSearch indicates auth failure (401/403) or we cannot
 		// validate auth due to backend errors, we must not return cold data.
 		authHeader := r.Header.Get("Authorization")
-		p.handleFanoutSearch(w, r.Context(), index, body, authHeader)
+		p.handleFanoutSearch(w, r.Context(), strings.Join(indices, ","), r.URL.Path, r.URL.RawQuery, fanout.Body, fanout.Merge, authHeader)
 		return
 	}
 }
@@ -150,7 +203,7 @@ func (p *Proxy) authenticateViaOpenSearch(ctx context.Context, authHeader string
 	return p.hotBackend.Authenticate(ctx, authHeader)
 }
 
-func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, index string, body []byte, authHeader string) {
+func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, index string, path string, rawQuery string, body []byte, merge MergeOptions, authHeader string) {
 	if authHeader == "" {
 		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
 		return
@@ -167,11 +220,11 @@ func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, i
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		hotResp, hotErr = p.hotBackend.SearchAs(ctx, index, body, authHeader)
+		hotResp, hotErr = p.hotBackend.SearchRaw(ctx, path, rawQuery, body, authHeader)
 	}()
 	go func() {
 		defer wg.Done()
-		coldResp, coldErr = p.coldBackend.Search(ctx, index, body)
+		coldResp, coldErr = p.searchColdIndices(ctx, strings.Split(index, ","), body)
 	}()
 	wg.Wait()
 
@@ -207,7 +260,7 @@ func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, i
 		return
 	}
 
-	merged := MergeSearchResponses(hotResp, coldResp)
+	merged := MergeSearchResponsesWithOptions(hotResp, coldResp, merge)
 	writeJSON(w, merged)
 }
 
@@ -237,4 +290,277 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		slog.Error("failed to write response", "error", err)
 	}
+}
+
+func parseEndpoint(path string) (endpointKind, []string) {
+	p := strings.TrimSuffix(path, "/")
+	if p == "" {
+		return endpointNone, nil
+	}
+	if p == "/_search" {
+		return endpointSearch, nil
+	}
+	if p == "/_msearch" {
+		return endpointMSearch, nil
+	}
+	if !strings.HasPrefix(p, "/") {
+		return endpointNone, nil
+	}
+
+	parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+	if len(parts) != 2 {
+		return endpointNone, nil
+	}
+	indices := splitIndices(parts[0])
+	switch parts[1] {
+	case "_search":
+		return endpointSearch, indices
+	case "_msearch":
+		return endpointMSearch, indices
+	default:
+		return endpointNone, nil
+	}
+}
+
+func splitIndices(seg string) []string {
+	if seg == "" {
+		return nil
+	}
+	parts := strings.Split(seg, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func hasInternalOrWildcard(indices []string) bool {
+	for _, idx := range indices {
+		if strings.HasPrefix(idx, ".") {
+			return true
+		}
+		if strings.ContainsAny(idx, "*?[]") {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Proxy) routeForIndices(body []byte, indices []string) RouteTarget {
+	if len(indices) == 0 {
+		return RouteBoth
+	}
+	target := RouteHotOnly
+	first := true
+	for _, index := range indices {
+		tsField := p.cfg.TimestampFieldForIndex(index)
+		t := p.router.Route(body, tsField)
+		if first {
+			target = t
+			first = false
+			continue
+		}
+		if target != t {
+			return RouteBoth
+		}
+	}
+	return target
+}
+
+func (p *Proxy) searchColdIndices(ctx context.Context, indices []string, body []byte) (*backend.SearchResponse, error) {
+	if len(indices) == 0 {
+		return nil, fmt.Errorf("no indices for cold search")
+	}
+	if len(indices) == 1 {
+		return p.coldBackend.Search(ctx, indices[0], body)
+	}
+
+	type res struct {
+		resp *backend.SearchResponse
+		err  error
+	}
+	ch := make(chan res, len(indices))
+	for _, idx := range indices {
+		idx := idx
+		go func() {
+			r, err := p.coldBackend.Search(ctx, idx, body)
+			ch <- res{resp: r, err: err}
+		}()
+	}
+
+	var merged *backend.SearchResponse
+	for i := 0; i < len(indices); i++ {
+		r := <-ch
+		if r.err != nil {
+			return nil, r.err
+		}
+		merged = MergeSearchResponses(merged, r.resp)
+	}
+	return merged, nil
+}
+
+func (p *Proxy) handleMSearch(w http.ResponseWriter, r *http.Request, defaultIndices []string) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
+		return
+	}
+	r.Body.Close()
+
+	// Restore body for potential passthrough.
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	entries, parseErr := parseMSearchNDJSON(body, defaultIndices)
+	if parseErr != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"invalid msearch body","detail":%q}`, parseErr.Error()), http.StatusBadRequest)
+		return
+	}
+	if len(entries) == 0 {
+		http.Error(w, `{"error":"empty msearch"}`, http.StatusBadRequest)
+		return
+	}
+
+	// If any entry has unsupported index syntax, passthrough for compatibility.
+	for _, e := range entries {
+		if hasInternalOrWildcard(e.Indices) || len(e.Indices) == 0 {
+			p.reverseProxy.ServeHTTP(w, r)
+			return
+		}
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	needsCold := false
+	for _, e := range entries {
+		if p.routeForIndices(e.Body, e.Indices) != RouteHotOnly {
+			needsCold = true
+			break
+		}
+	}
+	if needsCold {
+		if authHeader == "" {
+			http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+			return
+		}
+		if err := p.authenticateViaOpenSearch(r.Context(), authHeader); err != nil {
+			status := http.StatusBadGateway
+			if isAuthError(err) {
+				status = statusFromAuthError(err)
+			}
+			http.Error(w, `{"error":"authentication failed"}`, status)
+			return
+		}
+	}
+
+	out := make([]json.RawMessage, 0, len(entries))
+
+	for _, e := range entries {
+		target := p.routeForIndices(e.Body, e.Indices)
+		needsMerge := target == RouteBoth || (target == RouteColdOnly && len(e.Indices) > 1)
+		fanout := fanoutPlan{Body: e.Body, Merge: MergeOptions{}}
+		var fanoutErr error
+		if needsMerge {
+			fanout, fanoutErr = planFanout(e.Body)
+			if fanoutErr != nil {
+				out = append(out, json.RawMessage(fmt.Sprintf(`{"error":{"reason":%q},"status":400}`, fanoutErr.Error())))
+				continue
+			}
+		}
+
+		switch target {
+		case RouteHotOnly:
+			resp, err := p.hotBackend.SearchAs(r.Context(), strings.Join(e.Indices, ","), e.Body, authHeader)
+			if err != nil {
+				status := 502
+				if isAuthError(err) {
+					status = statusFromAuthError(err)
+				}
+				out = append(out, json.RawMessage(fmt.Sprintf(`{"error":{"reason":%q},"status":%d}`, err.Error(), status)))
+				continue
+			}
+			b, _ := json.Marshal(resp)
+			out = append(out, b)
+		case RouteColdOnly:
+			queryBody := e.Body
+			if needsMerge {
+				queryBody = fanout.Body
+			}
+			resp, err := p.searchColdIndices(r.Context(), e.Indices, queryBody)
+			if err != nil {
+				out = append(out, json.RawMessage(fmt.Sprintf(`{"error":{"reason":%q},"status":502}`, err.Error())))
+				continue
+			}
+			if needsMerge {
+				resp = MergeSearchResponsesWithOptions(nil, resp, fanout.Merge)
+			}
+			b, _ := json.Marshal(resp)
+			out = append(out, b)
+		case RouteBoth:
+			hotResp, hotErr := p.hotBackend.SearchAs(r.Context(), strings.Join(e.Indices, ","), fanout.Body, authHeader)
+			coldResp, coldErr := p.searchColdIndices(r.Context(), e.Indices, fanout.Body)
+			if hotErr != nil && coldErr != nil {
+				out = append(out, json.RawMessage(fmt.Sprintf(`{"error":{"reason":%q},"status":502}`, "both backends failed")))
+				continue
+			}
+			if isAuthError(hotErr) {
+				out = append(out, json.RawMessage(fmt.Sprintf(`{"error":{"reason":"authentication failed"},"status":%d}`, statusFromAuthError(hotErr))))
+				continue
+			}
+			merged := MergeSearchResponsesWithOptions(hotResp, coldResp, fanout.Merge)
+			b, _ := json.Marshal(merged)
+			out = append(out, b)
+		}
+	}
+
+	writeJSON(w, map[string]any{"responses": out})
+}
+
+type msearchEntry struct {
+	Indices []string
+	Body    []byte
+}
+
+func parseMSearchNDJSON(body []byte, defaultIndices []string) ([]msearchEntry, error) {
+	sc := bufio.NewScanner(bytes.NewReader(body))
+	// Allow larger msearch bodies than the default 64K token limit.
+	sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
+	var lines [][]byte
+	for sc.Scan() {
+		b := bytes.TrimSpace(sc.Bytes())
+		if len(b) == 0 {
+			continue
+		}
+		cp := make([]byte, len(b))
+		copy(cp, b)
+		lines = append(lines, cp)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if len(lines)%2 != 0 {
+		return nil, fmt.Errorf("msearch expects even number of lines")
+	}
+
+	out := make([]msearchEntry, 0, len(lines)/2)
+	for i := 0; i < len(lines); i += 2 {
+		header := lines[i]
+		query := lines[i+1]
+
+		indices := defaultIndices
+		var hdr map[string]any
+		if err := json.Unmarshal(header, &hdr); err == nil {
+			if v, ok := hdr["index"].(string); ok && v != "" {
+				indices = splitIndices(v)
+			}
+		}
+		out = append(out, msearchEntry{
+			Indices: indices,
+			Body:    query,
+		})
+	}
+	return out, nil
 }

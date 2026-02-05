@@ -23,4 +23,3 @@ func (e *HTTPStatusError) Error() string {
 	}
 	return fmt.Sprintf("http %s returned status %d: %s", e.URL, e.StatusCode, e.Body)
 }
-

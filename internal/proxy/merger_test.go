@@ -91,3 +91,63 @@ func TestMergeSearchResponses_GteRelation(t *testing.T) {
 		t.Errorf("Relation = %q, want \"gte\"", merged.Hits.Total.Relation)
 	}
 }
+
+func TestMergeSearchResponsesWithOptions_PaginateFromSize(t *testing.T) {
+	hot := &backend.SearchResponse{
+		Took: 1,
+		Hits: backend.HitsResult{
+			Total:    backend.HitsTotal{Value: 2, Relation: "eq"},
+			MaxScore: float64Ptr(3),
+			Hits: []json.RawMessage{
+				json.RawMessage(`{"_score": 3}`),
+				json.RawMessage(`{"_score": 1}`),
+			},
+		},
+	}
+	cold := &backend.SearchResponse{
+		Took: 1,
+		Hits: backend.HitsResult{
+			Total:    backend.HitsTotal{Value: 2, Relation: "eq"},
+			MaxScore: float64Ptr(2),
+			Hits: []json.RawMessage{
+				json.RawMessage(`{"_score": 2}`),
+				json.RawMessage(`{"_score": 0}`),
+			},
+		},
+	}
+
+	merged := MergeSearchResponsesWithOptions(hot, cold, MergeOptions{From: 1, Size: 2, Paginate: true})
+	if merged.Hits.Total.Value != 4 {
+		t.Fatalf("total=%d, want 4", merged.Hits.Total.Value)
+	}
+	if len(merged.Hits.Hits) != 2 {
+		t.Fatalf("hits=%d, want 2", len(merged.Hits.Hits))
+	}
+	// Overall sorted scores would be [3,2,1,0]; page from=1 size=2 => [2,1]
+	if extractScore(merged.Hits.Hits[0]) != 2 || extractScore(merged.Hits.Hits[1]) != 1 {
+		t.Fatalf("page scores=%v,%v want 2,1", extractScore(merged.Hits.Hits[0]), extractScore(merged.Hits.Hits[1]))
+	}
+	if merged.Hits.MaxScore == nil || *merged.Hits.MaxScore != 2 {
+		t.Fatalf("max_score=%v want 2", merged.Hits.MaxScore)
+	}
+}
+
+func TestMergeSearchResponsesWithOptions_ScoreAsc(t *testing.T) {
+	hot := &backend.SearchResponse{
+		Hits: backend.HitsResult{
+			Total: backend.HitsTotal{Value: 1, Relation: "eq"},
+			Hits:  []json.RawMessage{json.RawMessage(`{"_score": 5}`)},
+		},
+	}
+	cold := &backend.SearchResponse{
+		Hits: backend.HitsResult{
+			Total: backend.HitsTotal{Value: 1, Relation: "eq"},
+			Hits:  []json.RawMessage{json.RawMessage(`{"_score": 1}`)},
+		},
+	}
+
+	merged := MergeSearchResponsesWithOptions(hot, cold, MergeOptions{ScoreAsc: true})
+	if extractScore(merged.Hits.Hits[0]) != 1 {
+		t.Fatalf("first score=%v want 1", extractScore(merged.Hits.Hits[0]))
+	}
+}

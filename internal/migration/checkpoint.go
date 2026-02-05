@@ -10,13 +10,13 @@ import (
 
 // Checkpoint tracks migration progress for an index, enabling resume after failure.
 type Checkpoint struct {
-	Index       string    `json:"index"`
-	StartedAt   time.Time `json:"started_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	TotalDocs   int64     `json:"total_docs"`
-	Migrated    int64     `json:"migrated"`
-	SlicesDone  []int     `json:"slices_done"`
-	Completed   bool      `json:"completed"`
+	Index      string    `json:"index"`
+	StartedAt  time.Time `json:"started_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	TotalDocs  int64     `json:"total_docs"`
+	Migrated   int64     `json:"migrated"`
+	SlicesDone []int     `json:"slices_done"`
+	Completed  bool      `json:"completed"`
 }
 
 // CheckpointStore manages checkpoint persistence.

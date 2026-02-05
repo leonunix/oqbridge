@@ -50,4 +50,3 @@ func TestBuildOldDataDeleteQuery(t *testing.T) {
 		t.Fatalf("lt=%v, want %q", fieldAny["lt"], "now-7d")
 	}
 }
-

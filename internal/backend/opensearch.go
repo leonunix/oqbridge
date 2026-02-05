@@ -63,6 +63,46 @@ func (o *OpenSearch) Search(ctx context.Context, index string, body []byte) (*Se
 	return o.SearchAs(ctx, index, body, "")
 }
 
+// SearchRaw executes a search request against an explicit path and query string.
+// path is expected to be something like "/{index}/_search" or "/_search".
+func (o *OpenSearch) SearchRaw(ctx context.Context, path string, rawQuery string, body []byte, authHeader string) (*SearchResponse, error) {
+	u := o.baseURL + path
+	if rawQuery != "" {
+		u += "?" + rawQuery
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating search request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if authHeader != "" {
+		req.Header.Set("Authorization", authHeader)
+	} else {
+		o.setAuth(req)
+	}
+
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing search request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading search response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		slog.Error("opensearch search error", "status", resp.StatusCode, "body", string(respBody))
+		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, URL: u, Body: string(respBody)}
+	}
+
+	var result SearchResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("decoding search response: %w", err)
+	}
+	return &result, nil
+}
+
 // SearchAs executes a search using the given auth header instead of the
 // configured service account. If authHeader is empty, falls back to service account.
 func (o *OpenSearch) SearchAs(ctx context.Context, index string, body []byte, authHeader string) (*SearchResponse, error) {
@@ -107,8 +147,8 @@ func (o *OpenSearch) SearchAs(ctx context.Context, index string, body []byte, au
 
 // SlicedScrollConfig configures a sliced scroll request for parallel reads.
 type SlicedScrollConfig struct {
-	SliceID    int // This slice's ID (0-based).
-	SliceMax   int // Total number of slices.
+	SliceID    int    // This slice's ID (0-based).
+	SliceMax   int    // Total number of slices.
 	ScrollKeep string // Scroll context TTL (e.g., "5m").
 }
 

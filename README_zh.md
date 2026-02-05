@@ -36,7 +36,7 @@ OpenSearch 节点                          远端
 ### 代理 (`oqbridge`)
 
 - **透明代理** — 通过反向代理实现完整的 OpenSearch API 兼容。
-- **智能查询路由** — 根据查询的时间范围自动将 `_search` 请求路由到正确的后端。
+- **智能查询路由** — 根据查询的时间范围自动将支持的搜索请求路由到正确的后端。
 - **结果合并** — 并发查询两个后端，无缝合并结果。
 - **可配置保留期** — 可按索引调整冷热数据阈值（默认：30 天）。
 - **每索引时间字段** — 不同索引可以使用不同的时间戳字段。
@@ -140,6 +140,26 @@ OpenSearch Dashboards
 | **仅冷数据**（历史数据） | oqbridge 先拿客户端凭证向 OpenSearch 发起认证请求 (`_plugins/_security/authinfo`)，验证通过后才查询 Quickwit。 |
 | **跨冷热数据** | 并发查询两个后端，OpenSearch 那一路隐式验证用户身份。 |
 | **非搜索请求** | 直接反向代理到 OpenSearch，由 OpenSearch 验证。 |
+
+## Search API 支持说明
+
+oqbridge 会将所有非搜索请求原样转发到 OpenSearch。对于搜索拦截/分层（tiering），当前支持：
+
+- `/{index}/_search`
+- `/{index1,index2}/_search`（逗号分隔的显式索引）
+- `/{index}/_msearch`
+- `/_msearch`（要求每个 header 行都包含 `"index"`）
+
+`/_search`（path 中不包含 index）会按原样转发到 OpenSearch。
+
+### 跨冷热合并的限制
+
+当查询跨越热+冷两个层级（fan-out + merge）时，目前仅支持基于 score 的排序：
+
+- 默认排序（不指定 `sort`）
+- 显式 `_score` 排序
+
+对使用非 `_score` 的显式排序、`search_after` 或 PIT 的查询，oqbridge 会返回 `400`（仅针对需要跨冷热合并的场景），因为正确的全局排序需要完整的 sort-key 合并语义。
 
 ### 服务账号配置
 

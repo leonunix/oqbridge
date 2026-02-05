@@ -36,7 +36,7 @@ Client ──► oqbridge (proxy) ──┬──► OpenSearch  (hot, <30d)
 ### Proxy (`oqbridge`)
 
 - **Transparent proxy** — Full OpenSearch API compatibility via reverse proxy.
-- **Smart query routing** — Automatically routes `_search` requests to the correct backend based on time range.
+- **Smart query routing** — Automatically routes supported search requests to the correct backend based on time range.
 - **Result merging** — Fan-out to both backends in parallel, merge results seamlessly.
 - **Configurable retention** — Adjust the hot/cold threshold per index (default: 30 days).
 - **Per-index timestamp field** — Different indices can use different timestamp fields.
@@ -140,6 +140,26 @@ OpenSearch Dashboards
 | **Cold only** (old data) | oqbridge first validates the client's credentials against OpenSearch (`_plugins/_security/authinfo`). Only after successful authentication does it query Quickwit. |
 | **Both** (spans hot & cold) | OpenSearch leg validates auth implicitly. Both backends are queried in parallel. |
 | **Non-search requests** | Forwarded directly to OpenSearch via reverse proxy. OpenSearch validates. |
+
+## Search API support notes
+
+oqbridge forwards all non-search requests to OpenSearch unchanged. For search interception/tiering it currently supports:
+
+- `/{index}/_search`
+- `/{index1,index2}/_search` (comma-separated explicit indices)
+- `/{index}/_msearch`
+- `/_msearch` (requires each header line to include `"index"`)
+
+`/_search` (no index in path) is forwarded to OpenSearch as-is.
+
+### Cross-tier merge limitations
+
+When a query spans hot+cold tiers (fan-out + merge), oqbridge currently supports only score-based ordering:
+
+- Default ordering (no `sort`)
+- Explicit `_score` sort
+
+Queries using explicit non-`_score` sorts, `search_after`, or PIT are rejected with `400` for tiered (cross-tier) merging, because correct global ordering requires full sort-key merge semantics.
 
 ### Service accounts
 
