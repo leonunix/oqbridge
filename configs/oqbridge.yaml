@@ -1,0 +1,45 @@
+server:
+  listen: ":9200"
+
+# OpenSearch connection.
+# The proxy forwards the client's Authorization header to OpenSearch for
+# authentication. The username/password below is a SERVICE ACCOUNT used
+# only by oqbridge-migrate for background operations (scroll, delete).
+opensearch:
+  url: "http://localhost:9201"
+  username: ""
+  password: ""
+
+# Quickwit connection.
+# Quickwit does not share OpenSearch's user system. The credentials below
+# are a SERVICE ACCOUNT used by both oqbridge (proxy) and oqbridge-migrate
+# to access Quickwit internally. End users never talk to Quickwit directly.
+quickwit:
+  url: "http://localhost:7280"
+  username: ""
+  password: ""
+
+retention:
+  days: 30
+  timestamp_field: "@timestamp"  # Global default timestamp field
+  # Per-index timestamp field overrides
+  # index_fields:
+  #   my-index: "created_at"
+  #   another-index: "event_time"
+
+# Migration settings (used by oqbridge-migrate only, ignored by the proxy)
+migration:
+  enabled: true
+  schedule: "0 2 * * *"      # Cron schedule (daemon mode)
+  batch_size: 5000            # Documents per scroll batch
+  workers: 4                  # Parallel sliced scroll workers
+  compress: true              # Gzip compress data sent to Quickwit
+  checkpoint_dir: "/var/lib/oqbridge"  # Checkpoint directory for resume support
+  delete_after_migration: false
+  # Indices to migrate (required)
+  indices:
+    - "logs-*"
+  #   - "events-*"
+
+logging:
+  level: "info"  # debug, info, warn, error
