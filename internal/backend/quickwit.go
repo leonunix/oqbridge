@@ -56,7 +56,11 @@ func (q *Quickwit) Search(ctx context.Context, index string, body []byte) (*Sear
 
 	if resp.StatusCode >= 400 {
 		slog.Error("quickwit search error", "status", resp.StatusCode, "body", string(respBody))
-		return nil, fmt.Errorf("search returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
 	}
 
 	var result SearchResponse
@@ -96,7 +100,10 @@ func (q *Quickwit) BulkIngest(ctx context.Context, index string, docs []json.Raw
 	// Gzip compress if enabled (significant savings for 200GB+ daily transfers).
 	if q.compress {
 		var compressed bytes.Buffer
-		gz, _ := gzip.NewWriterLevel(&compressed, gzip.BestSpeed)
+		gz, err := gzip.NewWriterLevel(&compressed, gzip.BestSpeed)
+		if err != nil {
+			return fmt.Errorf("gzip init: %w", err)
+		}
 		if _, err := gz.Write(raw.Bytes()); err != nil {
 			return fmt.Errorf("gzip compression: %w", err)
 		}
@@ -126,7 +133,11 @@ func (q *Quickwit) BulkIngest(ctx context.Context, index string, docs []json.Raw
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("ingest returned status %d: %s", resp.StatusCode, string(respBody))
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
 	}
 	return nil
 }

@@ -153,3 +153,62 @@ func TestExtractTimeRange_InvalidJSON(t *testing.T) {
 		t.Errorf("expected nil for invalid JSON, got %v", tr)
 	}
 }
+
+func TestExtractTimeRange_NowDateMath(t *testing.T) {
+	start := time.Now().UTC()
+	body := `{
+		"query": {
+			"range": {
+				"@timestamp": {
+					"gte": "now-7d",
+					"lte": "now"
+				}
+			}
+		}
+	}`
+
+	tr := ExtractTimeRange([]byte(body), "@timestamp")
+	end := time.Now().UTC()
+
+	if tr == nil || tr.From == nil || tr.To == nil {
+		t.Fatalf("expected From/To, got %+v", tr)
+	}
+
+	// "now" should be within the test execution window.
+	if tr.To.Before(start) || tr.To.After(end) {
+		t.Fatalf("To=%v not within [%v, %v]", tr.To, start, end)
+	}
+
+	// "now-7d" should be within the shifted execution window.
+	startFrom := start.AddDate(0, 0, -7)
+	endFrom := end.AddDate(0, 0, -7)
+	if tr.From.Before(startFrom) || tr.From.After(endFrom) {
+		t.Fatalf("From=%v not within [%v, %v]", tr.From, startFrom, endFrom)
+	}
+}
+
+func TestExtractTimeRange_NowDateMath_WithRoundingSuffix(t *testing.T) {
+	start := time.Now().UTC()
+	body := `{
+		"query": {
+			"range": {
+				"@timestamp": {
+					"gte": "now-1d||/d"
+				}
+			}
+		}
+	}`
+
+	tr := ExtractTimeRange([]byte(body), "@timestamp")
+	end := time.Now().UTC()
+
+	if tr == nil || tr.From == nil {
+		t.Fatalf("expected From, got %+v", tr)
+	}
+
+	startFrom := start.AddDate(0, 0, -1)
+	endFrom := end.AddDate(0, 0, -1)
+	if tr.From.Before(startFrom) || tr.From.After(endFrom) {
+		t.Fatalf("From=%v not within [%v, %v]", tr.From, startFrom, endFrom)
+	}
+}

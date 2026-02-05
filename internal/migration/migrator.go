@@ -95,6 +95,13 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 		}
 	}
 
+	// Snapshot completed slices at start to avoid data races while workers run.
+	doneSlices := make(map[int]struct{}, len(cp.SlicesDone))
+	for _, id := range cp.SlicesDone {
+		doneSlices[id] = struct{}{}
+	}
+	var cpMu sync.Mutex
+
 	// Build the base query for documents older than retention.
 	query := buildOldDataQuery(tsField, m.cfg.Retention.Days, batchSize)
 	queryBytes, err := json.Marshal(query)
@@ -108,7 +115,7 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 
 	for i := 0; i < workers; i++ {
 		// Skip slices already completed in a previous run.
-		if cp.IsSliceDone(i) {
+		if _, ok := doneSlices[i]; ok {
 			slog.Info("skipping completed slice", "index", index, "slice", i)
 			continue
 		}
@@ -116,7 +123,7 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 		wg.Add(1)
 		go func(sliceID int) {
 			defer wg.Done()
-			if err := m.migrateSlice(ctx, index, queryBytes, sliceID, workers, progress, cp); err != nil {
+			if err := m.migrateSlice(ctx, index, queryBytes, sliceID, workers, progress, cp, &cpMu); err != nil {
 				errCh <- fmt.Errorf("slice %d: %w", sliceID, err)
 			}
 		}(i)
@@ -171,7 +178,7 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 }
 
 // migrateSlice processes a single sliced scroll partition.
-func (m *Migrator) migrateSlice(ctx context.Context, index string, queryBytes []byte, sliceID, sliceMax int, progress *Progress, cp *Checkpoint) error {
+func (m *Migrator) migrateSlice(ctx context.Context, index string, queryBytes []byte, sliceID, sliceMax int, progress *Progress, cp *Checkpoint, cpMu *sync.Mutex) error {
 	slice := &backend.SlicedScrollConfig{
 		SliceID:    sliceID,
 		SliceMax:   sliceMax,
@@ -220,9 +227,16 @@ func (m *Migrator) migrateSlice(ctx context.Context, index string, queryBytes []
 	}
 
 	// Mark this slice as done in checkpoint.
-	cp.SlicesDone = append(cp.SlicesDone, sliceID)
+	cpMu.Lock()
+	if !cp.IsSliceDone(sliceID) {
+		cp.SlicesDone = append(cp.SlicesDone, sliceID)
+	}
 	cp.Migrated += int64(sliceMigrated)
-	m.checkpoint.Save(cp)
+	saveErr := m.checkpoint.Save(cp)
+	cpMu.Unlock()
+	if saveErr != nil {
+		return fmt.Errorf("saving checkpoint: %w", saveErr)
+	}
 
 	slog.Info("slice worker completed", "index", index, "slice", sliceID, "migrated", sliceMigrated)
 	return nil

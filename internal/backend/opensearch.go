@@ -33,7 +33,8 @@ func (o *OpenSearch) Name() string { return "opensearch" }
 // Authenticate validates the given credentials against OpenSearch's _security/authinfo
 // or by performing a lightweight request. Returns nil if auth succeeds, error otherwise.
 func (o *OpenSearch) Authenticate(ctx context.Context, authHeader string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, o.baseURL+"/_plugins/_security/authinfo", nil)
+	endpoint := o.baseURL + "/_plugins/_security/authinfo"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("creating auth request: %w", err)
 	}
@@ -45,10 +46,15 @@ func (o *OpenSearch) Authenticate(ctx context.Context, authHeader string) error 
 	if err != nil {
 		return fmt.Errorf("auth request failed: %w", err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("authentication failed: %d", resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        endpoint,
+			Body:       string(b),
+		}
 	}
 	return nil
 }
@@ -85,7 +91,11 @@ func (o *OpenSearch) SearchAs(ctx context.Context, index string, body []byte, au
 
 	if resp.StatusCode >= 400 {
 		slog.Error("opensearch search error", "status", resp.StatusCode, "body", string(respBody))
-		return nil, fmt.Errorf("search returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
 	}
 
 	var result SearchResponse
@@ -173,7 +183,11 @@ func (o *OpenSearch) SlicedScroll(ctx context.Context, index string, body []byte
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("scroll returned status %d: %s", resp.StatusCode, string(respBody))
+		return nil, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        reqURL,
+			Body:       string(respBody),
+		}
 	}
 
 	var raw struct {
@@ -193,7 +207,8 @@ func (o *OpenSearch) SlicedScroll(ctx context.Context, index string, body []byte
 
 func (o *OpenSearch) ClearScroll(ctx context.Context, scrollID string) error {
 	body, _ := json.Marshal(map[string]string{"scroll_id": scrollID})
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, o.baseURL+"/_search/scroll", bytes.NewReader(body))
+	endpoint := o.baseURL + "/_search/scroll"
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating clear scroll request: %w", err)
 	}
@@ -204,7 +219,15 @@ func (o *OpenSearch) ClearScroll(ctx context.Context, scrollID string) error {
 	if err != nil {
 		return fmt.Errorf("executing clear scroll: %w", err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        endpoint,
+			Body:       string(respBody),
+		}
+	}
 	return nil
 }
 
@@ -250,7 +273,11 @@ func (o *OpenSearch) BulkIngest(ctx context.Context, index string, docs []json.R
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("bulk ingest returned status %d: %s", resp.StatusCode, string(respBody))
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
 	}
 	return nil
 }
@@ -273,7 +300,11 @@ func (o *OpenSearch) DeleteByQuery(ctx context.Context, index string, body []byt
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete_by_query returned status %d: %s", resp.StatusCode, string(respBody))
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
 	}
 	return nil
 }

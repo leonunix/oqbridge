@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -109,9 +110,14 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, index strin
 	case RouteColdOnly:
 		// Must validate user auth against OpenSearch first, because Quickwit
 		// has no knowledge of OpenSearch users.
-		if err := p.authenticateViaOpenSearch(r.Context(), r.Header.Get("Authorization")); err != nil {
-			slog.Warn("auth failed for cold-only query", "index", index, "error", err)
-			http.Error(w, `{"error":"authentication failed"}`, http.StatusUnauthorized)
+		authHeader := r.Header.Get("Authorization")
+		if err := p.authenticateViaOpenSearch(r.Context(), authHeader); err != nil {
+			status := http.StatusBadGateway
+			if authHeader == "" || isAuthError(err) {
+				status = statusFromAuthError(err)
+			}
+			slog.Warn("auth failed for cold-only query", "index", index, "status", status, "error", err)
+			http.Error(w, `{"error":"authentication failed"}`, status)
 			return
 		}
 
@@ -126,10 +132,9 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, index strin
 		return
 
 	case RouteBoth:
-		// Fan-out: OpenSearch leg validates auth implicitly via the client's
-		// auth header. If OpenSearch returns 401, the hot result is nil and
-		// only cold results are used. This is acceptable because the hot leg
-		// error is logged.
+		// Fan-out: We query both backends in parallel and merge results.
+		// Security: If OpenSearch indicates auth failure (401/403) or we cannot
+		// validate auth due to backend errors, we must not return cold data.
 		authHeader := r.Header.Get("Authorization")
 		p.handleFanoutSearch(w, r.Context(), index, body, authHeader)
 		return
@@ -146,6 +151,11 @@ func (p *Proxy) authenticateViaOpenSearch(ctx context.Context, authHeader string
 }
 
 func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, index string, body []byte, authHeader string) {
+	if authHeader == "" {
+		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var (
 		hotResp  *backend.SearchResponse
 		coldResp *backend.SearchResponse
@@ -172,6 +182,25 @@ func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, i
 		slog.Error("quickwit search failed during fan-out", "error", coldErr)
 	}
 
+	// If OpenSearch reports auth failure, do NOT return cold data.
+	if isAuthError(hotErr) {
+		http.Error(w, `{"error":"authentication failed"}`, statusFromAuthError(hotErr))
+		return
+	}
+
+	// If OpenSearch failed for non-auth reasons, validate auth explicitly before
+	// returning any cold data.
+	if hotErr != nil {
+		if err := p.authenticateViaOpenSearch(ctx, authHeader); err != nil {
+			status := http.StatusBadGateway
+			if isAuthError(err) {
+				status = statusFromAuthError(err)
+			}
+			http.Error(w, `{"error":"authentication failed"}`, status)
+			return
+		}
+	}
+
 	// If both fail, return error.
 	if hotErr != nil && coldErr != nil {
 		http.Error(w, `{"error":"both backends failed"}`, http.StatusBadGateway)
@@ -180,6 +209,27 @@ func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, i
 
 	merged := MergeSearchResponses(hotResp, coldResp)
 	writeJSON(w, merged)
+}
+
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var httpErr *backend.HTTPStatusError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden
+	}
+	return false
+}
+
+func statusFromAuthError(err error) int {
+	var httpErr *backend.HTTPStatusError
+	if errors.As(err, &httpErr) {
+		if httpErr.StatusCode == http.StatusForbidden {
+			return http.StatusForbidden
+		}
+	}
+	return http.StatusUnauthorized
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

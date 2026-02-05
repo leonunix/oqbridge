@@ -2,6 +2,8 @@ package util
 
 import (
 	"encoding/json"
+	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -121,6 +123,9 @@ func parseRangeClause(rangeRaw json.RawMessage, timestampField string) *TimeRang
 func parseTimeValue(v interface{}) *time.Time {
 	switch val := v.(type) {
 	case string:
+		if t := parseNowDateMath(val); t != nil {
+			return t
+		}
 		// Try common time formats.
 		for _, layout := range []string{
 			time.RFC3339,
@@ -132,15 +137,67 @@ func parseTimeValue(v interface{}) *time.Time {
 				return &t
 			}
 		}
-		// Handle "now" expressions (simplified: treat as current time).
-		if len(val) >= 3 && val[:3] == "now" {
-			t := time.Now().UTC()
-			return &t
-		}
 	case float64:
 		// Epoch milliseconds.
 		t := time.UnixMilli(int64(val)).UTC()
 		return &t
 	}
 	return nil
+}
+
+var nowDateMathRe = regexp.MustCompile(`^now(?:(?P<op>[+-])(?P<num>\d+)(?P<unit>[smhdwMy]))?(?:\|\|.*)?$`)
+
+// parseNowDateMath parses a small, safe subset of OpenSearch date math:
+// - now
+// - now-<N>[s|m|h|d|w]
+// - now+<N>[s|m|h|d|w]
+// - now-<N>[M|y] (months/years via AddDate)
+// Any unsupported expression returns nil so callers can fall back to "unknown".
+func parseNowDateMath(s string) *time.Time {
+	m := nowDateMathRe.FindStringSubmatch(s)
+	if m == nil {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	op := m[nowDateMathRe.SubexpIndex("op")]
+	if op == "" {
+		return &now
+	}
+	numStr := m[nowDateMathRe.SubexpIndex("num")]
+	unit := m[nowDateMathRe.SubexpIndex("unit")]
+
+	n, err := strconv.Atoi(numStr)
+	if err != nil || n < 0 {
+		return nil
+	}
+	if op == "-" {
+		n = -n
+	}
+
+	switch unit {
+	case "s":
+		t := now.Add(time.Duration(n) * time.Second)
+		return &t
+	case "m":
+		t := now.Add(time.Duration(n) * time.Minute)
+		return &t
+	case "h":
+		t := now.Add(time.Duration(n) * time.Hour)
+		return &t
+	case "d":
+		t := now.AddDate(0, 0, n)
+		return &t
+	case "w":
+		t := now.AddDate(0, 0, 7*n)
+		return &t
+	case "M":
+		t := now.AddDate(0, n, 0)
+		return &t
+	case "y":
+		t := now.AddDate(n, 0, 0)
+		return &t
+	default:
+		return nil
+	}
 }
