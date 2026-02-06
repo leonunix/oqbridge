@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strings"
 )
 
 // OpenSearch implements the Backend interface for OpenSearch.
@@ -351,6 +353,75 @@ func (o *OpenSearch) DeleteByQuery(ctx context.Context, index string, body []byt
 		}
 	}
 	return nil
+}
+
+// opensearchSystemPrefixes lists index name prefixes that are managed by
+// OpenSearch itself (security, query insights, etc.) and should never be
+// migrated to Quickwit.
+var opensearchSystemPrefixes = []string{
+	"security-auditlog-",
+	"top_queries-",
+}
+
+func isSystemIndex(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	for _, p := range opensearchSystemPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveIndices expands a wildcard pattern (e.g., "logs-*" or "*") to
+// concrete index names by querying OpenSearch's _cat/indices API.
+// Internal indices (starting with ".") and OpenSearch system indices
+// (security-auditlog-*, top_queries-*, etc.) are filtered out.
+func (o *OpenSearch) ResolveIndices(ctx context.Context, pattern string) ([]string, error) {
+	url := fmt.Sprintf("%s/_cat/indices/%s?format=json&h=index", o.baseURL, pattern)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating resolve indices request: %w", err)
+	}
+	o.setAuth(req)
+
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing resolve indices request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading resolve indices response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
+	}
+
+	var entries []struct {
+		Index string `json:"index"`
+	}
+	if err := json.Unmarshal(respBody, &entries); err != nil {
+		return nil, fmt.Errorf("decoding resolve indices response: %w", err)
+	}
+
+	var indices []string
+	for _, e := range entries {
+		if isSystemIndex(e.Index) {
+			continue
+		}
+		indices = append(indices, e.Index)
+	}
+	sort.Strings(indices)
+	return indices, nil
 }
 
 func (o *OpenSearch) setAuth(req *http.Request) {

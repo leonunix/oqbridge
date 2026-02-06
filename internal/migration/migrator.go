@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,20 +47,47 @@ func NewMigrator(cfg *config.Config, hot HotClient, cold ColdClient) (*Migrator,
 }
 
 // MigrateAll migrates all configured indices.
+// Wildcard patterns (e.g., "logs-*", "*") are resolved to concrete index
+// names via the OpenSearch _cat/indices API before migration.
 func (m *Migrator) MigrateAll(ctx context.Context) error {
-	indices := m.cfg.Migration.Indices
-	if len(indices) == 0 {
+	patterns := m.cfg.Migration.Indices
+	if len(patterns) == 0 {
 		slog.Info("no indices configured for migration, skipping")
 		return nil
 	}
 
-	for _, index := range indices {
-		if err := m.MigrateIndex(ctx, index); err != nil {
-			slog.Error("migration failed for index", "index", index, "error", err)
+	for _, pattern := range patterns {
+		concrete, err := m.resolvePattern(ctx, pattern)
+		if err != nil {
+			slog.Error("failed to resolve index pattern", "pattern", pattern, "error", err)
 			continue
+		}
+		for _, index := range concrete {
+			if err := m.MigrateIndex(ctx, index); err != nil {
+				slog.Error("migration failed for index", "index", index, "error", err)
+				continue
+			}
 		}
 	}
 	return nil
+}
+
+// resolvePattern expands a wildcard pattern to concrete index names.
+// If the pattern contains no wildcards, it is returned as-is.
+func (m *Migrator) resolvePattern(ctx context.Context, pattern string) ([]string, error) {
+	if !containsWildcard(pattern) {
+		return []string{pattern}, nil
+	}
+	resolved, err := m.hot.ResolveIndices(ctx, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("resolving pattern %q: %w", pattern, err)
+	}
+	slog.Info("resolved index pattern", "pattern", pattern, "count", len(resolved))
+	return resolved, nil
+}
+
+func containsWildcard(s string) bool {
+	return strings.ContainsAny(s, "*?[]")
 }
 
 // MigrateIndex migrates documents older than the retention threshold from
@@ -349,8 +377,9 @@ func (m *Migrator) ensureQuickwitIndex(ctx context.Context, index, tsField strin
 		slog.Info("quickwit index already exists", "index", index)
 		return nil
 	}
-	slog.Info("creating quickwit index", "index", index, "timestamp_field", tsField)
-	if err := m.cold.CreateIndex(ctx, index, tsField); err != nil {
+	coldDays := m.cfg.Retention.ColdDays
+	slog.Info("creating quickwit index", "index", index, "timestamp_field", tsField, "retention_days", coldDays)
+	if err := m.cold.CreateIndex(ctx, index, tsField, coldDays); err != nil {
 		return fmt.Errorf("creating index: %w", err)
 	}
 	return nil

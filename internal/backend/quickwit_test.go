@@ -158,7 +158,7 @@ func TestQuickwit_CreateIndex_Success(t *testing.T) {
 	defer srv.Close()
 
 	qw := NewQuickwit(srv.URL, "", "", false, nil)
-	if err := qw.CreateIndex(context.Background(), "logs", "@timestamp"); err != nil {
+	if err := qw.CreateIndex(context.Background(), "logs", "@timestamp", 0); err != nil {
 		t.Fatalf("CreateIndex: %v", err)
 	}
 
@@ -182,7 +182,7 @@ func TestQuickwit_CreateIndex_Error(t *testing.T) {
 	defer srv.Close()
 
 	qw := NewQuickwit(srv.URL, "", "", false, nil)
-	err := qw.CreateIndex(context.Background(), "logs", "@timestamp")
+	err := qw.CreateIndex(context.Background(), "logs", "@timestamp", 0)
 	if err == nil {
 		t.Fatalf("expected error")
 	}

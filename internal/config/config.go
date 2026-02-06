@@ -44,6 +44,7 @@ type QuickwitConfig struct {
 
 type RetentionConfig struct {
 	Days           int               `koanf:"days"`
+	ColdDays       int               `koanf:"cold_days"`        // How long to keep data in Quickwit (0 = forever).
 	TimestampField string            `koanf:"timestamp_field"`
 	IndexFields    map[string]string `koanf:"index_fields"`
 }

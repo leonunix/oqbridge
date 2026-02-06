@@ -10,6 +10,7 @@ oqbridge sits in front of OpenSearch and Quickwit, providing a unified query int
 
 - **Hot data** (last 30 days) → stored in **OpenSearch** for fast query performance.
 - **Cold data** (older than 30 days) → automatically migrated to **Quickwit** for low storage cost and minimal system overhead.
+- **Cold retention** — Quickwit data is automatically deleted after a configurable period (default: 365 days).
 
 ## Architecture
 
@@ -25,7 +26,7 @@ OpenSearch node                         Remote
 └───────────────────────────┘     └──────────────┘
 
 Client ──► oqbridge (proxy) ──┬──► OpenSearch  (hot, <30d)
-                               └──► Quickwit    (cold, ≥30d)
+                               └──► Quickwit    (cold, ≥30d, auto-delete after 365d)
 ```
 
 - **`oqbridge`** — Query proxy. Deploy anywhere. Routes searches to the correct backend based on time range, merges results transparently.
@@ -37,13 +38,17 @@ Client ──► oqbridge (proxy) ──┬──► OpenSearch  (hot, <30d)
 
 - **Transparent proxy** — Full OpenSearch API compatibility via reverse proxy.
 - **Smart query routing** — Automatically routes supported search requests to the correct backend based on time range.
+- **Wildcard index support** — Queries like `logs-*/_search` and `*/_search` are correctly routed based on time range, with wildcard resolution for cold-tier queries.
 - **Result merging** — Fan-out to both backends in parallel, merge results seamlessly.
 - **Configurable retention** — Adjust the hot/cold threshold per index (default: 30 days).
 - **Per-index timestamp field** — Different indices can use different timestamp fields.
 
 ### Migration (`oqbridge-migrate`)
 
+- **Wildcard index patterns** — Configure `indices: ["*"]` or `["logs-*"]` to migrate matching indices. Wildcard patterns are resolved to concrete index names via the OpenSearch `_cat/indices` API.
+- **System index filtering** — Internal OpenSearch indices (`.security`, `security-auditlog-*`, `top_queries-*`, etc.) are automatically excluded from migration.
 - **Auto index creation** — Automatically creates Quickwit indices using dynamic (schemaless) mode before migration. No need to pre-define schemas.
+- **Cold data retention** — Quickwit indices are created with a retention policy. Data older than `retention.cold_days` is automatically deleted by Quickwit.
 - **Parallel sliced scroll** — Multiple workers read from OpenSearch concurrently using sliced scroll API.
 - **Gzip compression** — Compress data over the network to Quickwit (significant savings for large volumes).
 - **Checkpoint/resume** — Interrupted migrations automatically resume from the last completed slice.
@@ -103,6 +108,7 @@ See [configs/oqbridge.yaml](configs/oqbridge.yaml) for the full configuration re
 | `opensearch.url` | `http://localhost:9201` | OpenSearch endpoint |
 | `quickwit.url` | `http://localhost:7280` | Quickwit endpoint |
 | `retention.days` | `30` | Hot data retention period (days) |
+| `retention.cold_days` | `365` | Cold data retention in Quickwit (days, 0 = forever) |
 | `retention.timestamp_field` | `@timestamp` | Default timestamp field |
 | `retention.index_fields` | — | Per-index timestamp field overrides |
 
@@ -117,7 +123,24 @@ See [configs/oqbridge.yaml](configs/oqbridge.yaml) for the full configuration re
 | `migration.compress` | `true` | Gzip compress data to Quickwit |
 | `migration.checkpoint_dir` | `/var/lib/oqbridge` | Checkpoint storage directory |
 | `migration.delete_after_migration` | `false` | Delete data from OpenSearch after migration |
-| `migration.indices` | — | Index patterns to migrate |
+| `migration.indices` | — | Index patterns to migrate (supports wildcards: `*`, `logs-*`) |
+
+## Data Lifecycle
+
+```text
+Day 0          Day 25              Day 30                    Day 395
+  │              │                   │                         │
+  ▼              ▼                   ▼                         ▼
+ Ingest ──► OpenSearch (hot) ──► Migrate to Quickwit ──► Auto-delete from Quickwit
+            ◄── retention.days ──►
+            ◄── migrate_after_days ►
+                                    ◄──── retention.cold_days (365) ────►
+```
+
+- **Day 0–25**: Data lives in OpenSearch only (hot tier).
+- **Day 25–30**: Data is migrated to Quickwit by `oqbridge-migrate`. The exact boundary is controlled by `migration.migrate_after_days`.
+- **Day 30+**: Data is queryable from Quickwit (cold tier). If `delete_after_migration: true`, it is also removed from OpenSearch.
+- **Day 395+**: Quickwit automatically deletes data older than `retention.cold_days` (365 days).
 
 ## Authentication
 
@@ -149,10 +172,13 @@ oqbridge forwards all non-search requests to OpenSearch unchanged. For search in
 
 - `/{index}/_search`
 - `/{index1,index2}/_search` (comma-separated explicit indices)
+- `/{index-pattern*}/_search` (wildcard patterns, resolved for cold-tier queries)
 - `/{index}/_msearch`
 - `/_msearch` (requires each header line to include `"index"`)
 
 `/_search` (no index in path) is forwarded to OpenSearch as-is.
+
+Wildcard patterns (e.g., `logs-*/_search`) are fully supported for time-range routing. For hot-tier queries, the wildcard is passed to OpenSearch as-is (OpenSearch handles wildcards natively). For cold-tier queries, oqbridge resolves the wildcard against available Quickwit indices and queries only the matching ones.
 
 ### Cross-tier merge limitations
 

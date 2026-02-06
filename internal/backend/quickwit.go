@@ -181,18 +181,82 @@ func (q *Quickwit) IndexExists(ctx context.Context, index string) (bool, error) 
 	return true, nil
 }
 
+// ListIndices returns all index IDs from Quickwit.
+func (q *Quickwit) ListIndices(ctx context.Context) ([]string, error) {
+	url := fmt.Sprintf("%s/api/v1/indexes", q.baseURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating list indices request: %w", err)
+	}
+	q.setAuth(req)
+
+	resp, err := q.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("executing list indices request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading list indices response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		return nil, &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			URL:        url,
+			Body:       string(respBody),
+		}
+	}
+
+	var entries []struct {
+		IndexConfig struct {
+			IndexID string `json:"index_id"`
+		} `json:"index_config"`
+	}
+	if err := json.Unmarshal(respBody, &entries); err != nil {
+		return nil, fmt.Errorf("decoding list indices response: %w", err)
+	}
+
+	indices := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IndexConfig.IndexID != "" {
+			indices = append(indices, e.IndexConfig.IndexID)
+		}
+	}
+	return indices, nil
+}
+
 // CreateIndex creates a new index in Quickwit with dynamic schema mode.
-func (q *Quickwit) CreateIndex(ctx context.Context, index string, timestampField string) error {
+// If retentionDays > 0, a retention policy is set so Quickwit automatically
+// deletes data older than the specified number of days.
+func (q *Quickwit) CreateIndex(ctx context.Context, index string, timestampField string, retentionDays int) error {
 	indexConfig := map[string]interface{}{
 		"version":  "0.8",
 		"index_id": index,
 		"doc_mapping": map[string]interface{}{
 			"mode":            "dynamic",
 			"timestamp_field": timestampField,
+			"field_mappings": []map[string]interface{}{
+				{
+					"name":          timestampField,
+					"type":          "datetime",
+					"input_formats": []string{"rfc3339", "unix_timestamp"},
+					"output_format": "rfc3339",
+					"fast":          true,
+				},
+			},
 		},
 		"indexing_settings": map[string]interface{}{
 			"commit_timeout_secs": 60,
 		},
+	}
+
+	if retentionDays > 0 {
+		indexConfig["retention"] = map[string]interface{}{
+			"period":   fmt.Sprintf("%d days", retentionDays),
+			"schedule": "daily",
+		}
 	}
 
 	body, err := json.Marshal(indexConfig)

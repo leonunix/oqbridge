@@ -25,7 +25,8 @@ quickwit:
 
 retention:
   days: 30
-  timestamp_field: "@timestamp"  # Global default timestamp field
+  cold_days: 365                   # How long to keep data in Quickwit (0 = forever)
+  timestamp_field: "@timestamp"    # Global default timestamp field
   # Per-index timestamp field overrides
   # index_fields:
   #   my-index: "created_at"

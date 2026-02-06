@@ -12,11 +12,12 @@ type HotClient interface {
 	SlicedScroll(ctx context.Context, index string, body []byte, scrollID string, slice *backend.SlicedScrollConfig) (*backend.ScrollResult, error)
 	ClearScroll(ctx context.Context, scrollID string) error
 	DeleteByQuery(ctx context.Context, index string, body []byte) error
+	ResolveIndices(ctx context.Context, pattern string) ([]string, error)
 }
 
 // ColdClient is the subset of Quickwit operations needed by Migrator.
 type ColdClient interface {
 	BulkIngest(ctx context.Context, index string, docs []json.RawMessage) error
 	IndexExists(ctx context.Context, index string) (bool, error)
-	CreateIndex(ctx context.Context, index string, timestampField string) error
+	CreateIndex(ctx context.Context, index string, timestampField string, retentionDays int) error
 }

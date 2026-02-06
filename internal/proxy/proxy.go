@@ -17,6 +17,7 @@ import (
 
 	"github.com/leonunix/oqbridge/internal/backend"
 	"github.com/leonunix/oqbridge/internal/config"
+	"github.com/leonunix/oqbridge/internal/util"
 )
 
 type endpointKind int
@@ -83,16 +84,15 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.reverseProxy.ServeHTTP(w, r)
 			return
 		}
-		// Skip internal indices (start with .) or wildcard patterns.
-		if hasInternalOrWildcard(indices) {
+		// Skip internal indices (start with ".") — these are OpenSearch system indices.
+		if hasInternal(indices) {
 			p.reverseProxy.ServeHTTP(w, r)
 			return
 		}
 		p.handleSearch(w, r, indices)
 		return
 	case endpointMSearch:
-		// Skip interception if any indices are internal/wildcard.
-		if hasInternalOrWildcard(indices) {
+		if hasInternal(indices) {
 			p.reverseProxy.ServeHTTP(w, r)
 			return
 		}
@@ -129,8 +129,8 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, indices []s
 		return
 
 	case RouteColdOnly:
-		// Single index: passthrough to Quickwit (no merge semantics needed).
-		if len(indices) == 1 {
+		// Single non-wildcard index: passthrough to Quickwit (no merge needed).
+		if len(indices) == 1 && !hasWildcard(indices) {
 			authHeader := r.Header.Get("Authorization")
 			if err := p.authenticateViaOpenSearch(r.Context(), authHeader); err != nil {
 				status := http.StatusBadGateway
@@ -342,11 +342,17 @@ func splitIndices(seg string) []string {
 	return out
 }
 
-func hasInternalOrWildcard(indices []string) bool {
+func hasInternal(indices []string) bool {
 	for _, idx := range indices {
 		if strings.HasPrefix(idx, ".") {
 			return true
 		}
+	}
+	return false
+}
+
+func hasWildcard(indices []string) bool {
+	for _, idx := range indices {
 		if strings.ContainsAny(idx, "*?[]") {
 			return true
 		}
@@ -375,7 +381,47 @@ func (p *Proxy) routeForIndices(body []byte, indices []string) RouteTarget {
 	return target
 }
 
+// resolveColdIndices expands wildcard patterns in the index list to concrete
+// Quickwit index names. Non-wildcard indices are returned as-is.
+func (p *Proxy) resolveColdIndices(ctx context.Context, indices []string) ([]string, error) {
+	if !hasWildcard(indices) {
+		return indices, nil
+	}
+	all, err := p.coldBackend.ListIndices(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing quickwit indices: %w", err)
+	}
+	seen := make(map[string]struct{})
+	var resolved []string
+	for _, idx := range indices {
+		if !strings.ContainsAny(idx, "*?[]") {
+			if _, ok := seen[idx]; !ok {
+				seen[idx] = struct{}{}
+				resolved = append(resolved, idx)
+			}
+			continue
+		}
+		for _, name := range all {
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			if util.MatchWildcard(idx, name) {
+				seen[name] = struct{}{}
+				resolved = append(resolved, name)
+			}
+		}
+	}
+	return resolved, nil
+}
+
 func (p *Proxy) searchColdIndices(ctx context.Context, indices []string, body []byte) (*backend.SearchResponse, error) {
+	// Resolve wildcard patterns to concrete Quickwit index names.
+	resolved, err := p.resolveColdIndices(ctx, indices)
+	if err != nil {
+		return nil, err
+	}
+	indices = resolved
+
 	if len(indices) == 0 {
 		return nil, fmt.Errorf("no indices for cold search")
 	}
@@ -428,9 +474,9 @@ func (p *Proxy) handleMSearch(w http.ResponseWriter, r *http.Request, defaultInd
 		return
 	}
 
-	// If any entry has unsupported index syntax, passthrough for compatibility.
+	// If any entry has internal indices, passthrough for compatibility.
 	for _, e := range entries {
-		if hasInternalOrWildcard(e.Indices) || len(e.Indices) == 0 {
+		if hasInternal(e.Indices) || len(e.Indices) == 0 {
 			p.reverseProxy.ServeHTTP(w, r)
 			return
 		}

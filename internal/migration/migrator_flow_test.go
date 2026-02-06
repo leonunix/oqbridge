@@ -30,6 +30,9 @@ type fakeHot struct {
 
 	// record whether a slice was requested.
 	requested map[int]bool
+
+	// resolvedIndices maps pattern → concrete index names for ResolveIndices.
+	resolvedIndices map[string][]string
 }
 
 func newFakeHot(pages map[int][][]json.RawMessage) *fakeHot {
@@ -83,6 +86,18 @@ func (f *fakeHot) SlicedScroll(_ context.Context, _ string, body []byte, scrollI
 func (f *fakeHot) ClearScroll(_ context.Context, _ string) error             { return nil }
 func (f *fakeHot) DeleteByQuery(_ context.Context, _ string, _ []byte) error { return nil }
 
+// resolvedIndices maps pattern → concrete index names for ResolveIndices.
+// If nil, defaults to returning []string{"logs"}.
+func (f *fakeHot) ResolveIndices(_ context.Context, pattern string) ([]string, error) {
+	if f.resolvedIndices != nil {
+		if v, ok := f.resolvedIndices[pattern]; ok {
+			return v, nil
+		}
+		return nil, nil
+	}
+	return []string{"logs"}, nil
+}
+
 type fakeCold struct {
 	mu sync.Mutex
 
@@ -122,7 +137,7 @@ func (f *fakeCold) IndexExists(_ context.Context, _ string) (bool, error) {
 	return true, nil
 }
 
-func (f *fakeCold) CreateIndex(_ context.Context, _ string, _ string) error {
+func (f *fakeCold) CreateIndex(_ context.Context, _ string, _ string, _ int) error {
 	return nil
 }
 
@@ -310,4 +325,48 @@ func TestMigrator_reportProgress_TickAndStop(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("reportProgress did not stop")
 	}
+}
+
+func TestMigrator_MigrateAll_WildcardResolution(t *testing.T) {
+	dir := t.TempDir()
+
+	// One concrete index resolved from "logs-*".
+	hot := newFakeHot(map[int][][]json.RawMessage{
+		0: {makeHits(0, 1), nil},
+		1: {makeHits(1, 1), nil},
+	})
+	hot.resolvedIndices = map[string][]string{
+		"logs-*": {"logs-2025-01-01"},
+	}
+	cold := newFakeCold()
+
+	cfg := &config.Config{
+		Retention: config.RetentionConfig{Days: 30, TimestampField: "@timestamp"},
+		Migration: config.MigrationConfig{
+			Schedule:      "* * * * *",
+			BatchSize:     2,
+			Workers:       2,
+			CheckpointDir: dir,
+			Indices:       []string{"logs-*"},
+		},
+	}
+	m, err := NewMigrator(cfg, hot, cold)
+	if err != nil {
+		t.Fatalf("NewMigrator: %v", err)
+	}
+	m.progressInterval = time.Millisecond
+
+	if err := m.MigrateAll(context.Background()); err != nil {
+		t.Fatalf("MigrateAll: %v", err)
+	}
+
+	cold.mu.Lock()
+	// Docs should be ingested under the concrete index name, not the wildcard.
+	if _, ok := cold.docsByIndex["logs-*"]; ok {
+		t.Fatalf("docs should NOT be under wildcard pattern 'logs-*'")
+	}
+	if docs, ok := cold.docsByIndex["logs-2025-01-01"]; !ok || len(docs) == 0 {
+		t.Fatalf("expected docs under 'logs-2025-01-01', got %v", cold.docsByIndex)
+	}
+	cold.mu.Unlock()
 }

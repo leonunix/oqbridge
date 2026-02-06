@@ -10,6 +10,7 @@ oqbridge 部署在 OpenSearch 和 Quickwit 前端，提供统一的查询接口�
 
 - **热数据**（最近 30 天）→ 存储在 **OpenSearch** 中，提供快速查询性能。
 - **冷数据**（超过 30 天）→ 自动迁移至 **Quickwit**，以极低的存储成本和系统开销进行保存。
+- **冷数据保留期** — Quickwit 中的数据在可配置的时间后自动删除（默认：365 天）。
 
 ## 架构
 
@@ -25,7 +26,7 @@ OpenSearch 节点                          远端
 └───────────────────────────┘     └──────────────┘
 
 客户端 ──► oqbridge (代理) ──┬──► OpenSearch  (热数据, <30天)
-                              └──► Quickwit    (冷数据, ≥30天)
+                              └──► Quickwit    (冷数据, ≥30天, 365天后自动删除)
 ```
 
 - **`oqbridge`** — 查询代理。可部署在任意节点。根据时间范围将搜索请求路由到正确的后端，透明合并结果。
@@ -37,13 +38,17 @@ OpenSearch 节点                          远端
 
 - **透明代理** — 通过反向代理实现完整的 OpenSearch API 兼容。
 - **智能查询路由** — 根据查询的时间范围自动将支持的搜索请求路由到正确的后端。
+- **通配符索引支持** — `logs-*/_search` 和 `*/_search` 等通配符查询会根据时间范围正确路由，冷数据查询时自动解析通配符匹配的 Quickwit 索引。
 - **结果合并** — 并发查询两个后端，无缝合并结果。
 - **可配置保留期** — 可按索引调整冷热数据阈值（默认：30 天）。
 - **每索引时间字段** — 不同索引可以使用不同的时间戳字段。
 
 ### 迁移 (`oqbridge-migrate`)
 
+- **通配符索引模式** — 配置 `indices: ["*"]` 或 `["logs-*"]` 迁移匹配的索引。通配符模式通过 OpenSearch `_cat/indices` API 解析为具体索引名。
+- **系统索引过滤** — 自动排除 OpenSearch 内部索引（`.security`、`security-auditlog-*`、`top_queries-*` 等），不会被误迁移。
 - **自动创建索引** — 迁移前自动在 Quickwit 中创建索引，使用动态（schemaless）模式，无需预定义 schema。
+- **冷数据保留策略** — 创建 Quickwit 索引时自动配置保留策略，超过 `retention.cold_days` 天的数据由 Quickwit 自动删除。
 - **并行 Sliced Scroll** — 多个 worker 使用 sliced scroll API 并发读取 OpenSearch。
 - **Gzip 压缩** — 压缩传输到 Quickwit 的数据（大数据量下显著节省带宽）。
 - **断点续传** — 中断的迁移自动从上次完成的 slice 恢复。
@@ -103,6 +108,7 @@ cp configs/oqbridge.yaml oqbridge.yaml
 | `opensearch.url` | `http://localhost:9201` | OpenSearch 地址 |
 | `quickwit.url` | `http://localhost:7280` | Quickwit 地址 |
 | `retention.days` | `30` | 热数据保留天数 |
+| `retention.cold_days` | `365` | Quickwit 冷数据保留天数（0 = 永不删除） |
 | `retention.timestamp_field` | `@timestamp` | 默认时间戳字段 |
 | `retention.index_fields` | — | 每索引时间戳字段覆盖 |
 
@@ -117,7 +123,24 @@ cp configs/oqbridge.yaml oqbridge.yaml
 | `migration.compress` | `true` | 启用 Gzip 压缩传输 |
 | `migration.checkpoint_dir` | `/var/lib/oqbridge` | 断点存储目录 |
 | `migration.delete_after_migration` | `false` | 迁移后删除 OpenSearch 中的数据 |
-| `migration.indices` | — | 需要迁移的索引模式 |
+| `migration.indices` | — | 需要迁移的索引模式（支持通配符：`*`、`logs-*`） |
+
+## 数据生命周期
+
+```text
+Day 0          Day 25              Day 30                    Day 395
+  │              │                   │                         │
+  ▼              ▼                   ▼                         ▼
+ 写入 ──► OpenSearch (热) ──► 迁移到 Quickwit ──► Quickwit 自动删除
+           ◄── retention.days ──►
+           ◄── migrate_after_days ►
+                                   ◄──── retention.cold_days (365) ────►
+```
+
+- **第 0–25 天**：数据仅存储在 OpenSearch（热层）。
+- **第 25–30 天**：`oqbridge-migrate` 将数据迁移到 Quickwit。具体边界由 `migration.migrate_after_days` 控制。
+- **第 30 天以后**：数据从 Quickwit（冷层）查询。如果 `delete_after_migration: true`，同时从 OpenSearch 中删除。
+- **第 395 天以后**：Quickwit 自动删除超过 `retention.cold_days`（365 天）的数据。
 
 ## 认证
 
@@ -149,10 +172,13 @@ oqbridge 会将所有非搜索请求原样转发到 OpenSearch。对于搜索拦
 
 - `/{index}/_search`
 - `/{index1,index2}/_search`（逗号分隔的显式索引）
+- `/{index-pattern*}/_search`（通配符模式，冷数据查询时自动解析）
 - `/{index}/_msearch`
 - `/_msearch`（要求每个 header 行都包含 `"index"`）
 
 `/_search`（path 中不包含 index）会按原样转发到 OpenSearch。
+
+通配符模式（如 `logs-*/_search`）完全支持时间范围路由。热数据查询时，通配符原样传递给 OpenSearch（OpenSearch 原生支持通配符）。冷数据查询时，oqbridge 会解析通配符，匹配 Quickwit 中已有的索引后查询。
 
 ### 跨冷热合并的限制
 

@@ -61,10 +61,30 @@ func newMockOpenSearch(t *testing.T) *httptest.Server {
 }
 
 // newMockQuickwit creates a mock Quickwit server that always responds.
+// It responds to both search and list-indexes requests.
 func newMockQuickwit(t *testing.T) *httptest.Server {
+	t.Helper()
+	return newMockQuickwitWithIndices(t, []string{"logs"})
+}
+
+func newMockQuickwitWithIndices(t *testing.T, indices []string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		// Handle ListIndices: GET /api/v1/indexes
+		if r.URL.Path == "/api/v1/indexes" && r.Method == http.MethodGet {
+			var entries []map[string]any
+			for _, idx := range indices {
+				entries = append(entries, map[string]any{
+					"index_config": map[string]any{"index_id": idx},
+				})
+			}
+			json.NewEncoder(w).Encode(entries)
+			return
+		}
+
+		// Handle search.
 		resp := backend.SearchResponse{
 			Took: 10,
 			Hits: backend.HitsResult{
@@ -686,5 +706,86 @@ func TestProxy_InternalIndex_SkipsInterception(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProxy_WildcardIndex_ColdOnly_RoutesToQuickwit(t *testing.T) {
+	os := newMockOpenSearch(t)
+	defer os.Close()
+	// Quickwit has two matching indices.
+	qw := newMockQuickwitWithIndices(t, []string{"logs-2025-01-01", "logs-2025-01-02", "events-2025-01-01"})
+	defer qw.Close()
+
+	p := newTestProxy(t, os.URL, qw.URL)
+
+	// Wildcard query with cold-only time range should route to Quickwit.
+	req := httptest.NewRequest(http.MethodPost, "/logs-*/_search", strings.NewReader(buildColdOnlyQuery()))
+	req.Header.Set("Authorization", validToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp backend.SearchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	// Should have merged results from 2 matching Quickwit indices (logs-2025-01-01, logs-2025-01-02).
+	if resp.Hits.Total.Value != 2 {
+		t.Fatalf("expected 2 cold merged hits, got %d", resp.Hits.Total.Value)
+	}
+}
+
+func TestProxy_WildcardIndex_HotOnly_PassthroughToOpenSearch(t *testing.T) {
+	os := newMockOpenSearch(t)
+	defer os.Close()
+	qw := newMockQuickwit(t)
+	defer qw.Close()
+
+	p := newTestProxy(t, os.URL, qw.URL)
+
+	// Wildcard query with hot-only time range should passthrough to OpenSearch.
+	req := httptest.NewRequest(http.MethodPost, "/logs-*/_search", strings.NewReader(buildHotOnlyQuery()))
+	req.Header.Set("Authorization", validToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProxy_WildcardIndex_Both_MergedResults(t *testing.T) {
+	os := newMockOpenSearch(t)
+	defer os.Close()
+	qw := newMockQuickwitWithIndices(t, []string{"logs-2025-01-01"})
+	defer qw.Close()
+
+	p := newTestProxy(t, os.URL, qw.URL)
+
+	req := httptest.NewRequest(http.MethodPost, "/logs-*/_search", strings.NewReader(buildBothQuery()))
+	req.Header.Set("Authorization", validToken)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	p.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp backend.SearchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	// Hot (1 hit from OpenSearch) + Cold (1 hit from Quickwit).
+	if resp.Hits.Total.Value != 2 {
+		t.Fatalf("expected 2 merged hits, got %d", resp.Hits.Total.Value)
 	}
 }
