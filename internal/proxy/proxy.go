@@ -185,7 +185,10 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, indices []s
 	case RouteBoth:
 		fanout, fanoutErr := planFanout(body)
 		if fanoutErr != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"unsupported query for cross-tier merge","detail":%q}`, fanoutErr.Error()), http.StatusBadRequest)
+			// Query uses unsupported sort/search_after/pit for cross-tier merge.
+			// Graceful degradation: return hot results only instead of 400.
+			slog.Info("falling back to hot-only for unsupported cross-tier query", "indices", strings.Join(indices, ","), "reason", fanoutErr.Error())
+			p.reverseProxy.ServeHTTP(w, r)
 			return
 		}
 
@@ -423,7 +426,13 @@ func (p *Proxy) searchColdIndices(ctx context.Context, indices []string, body []
 	indices = resolved
 
 	if len(indices) == 0 {
-		return nil, fmt.Errorf("no indices for cold search")
+		// No matching Quickwit indices (e.g., migration hasn't run yet).
+		// Return empty response instead of error so fan-out can still return hot results.
+		return &backend.SearchResponse{
+			Hits: backend.HitsResult{
+				Total: backend.HitsTotal{Value: 0, Relation: "eq"},
+			},
+		}, nil
 	}
 	if len(indices) == 1 {
 		return p.coldBackend.Search(ctx, indices[0], body)

@@ -278,7 +278,7 @@ func TestProxy_Both_ValidAuth_MergedResults(t *testing.T) {
 	}
 }
 
-func TestProxy_Both_ExplicitSort_Unsupported(t *testing.T) {
+func TestProxy_Both_ExplicitSort_FallsBackToHotOnly(t *testing.T) {
 	os := newMockOpenSearch(t)
 	defer os.Close()
 	qw := newMockQuickwit(t)
@@ -286,16 +286,16 @@ func TestProxy_Both_ExplicitSort_Unsupported(t *testing.T) {
 
 	p := newTestProxy(t, os.URL, qw.URL)
 
-	req := httptest.NewRequest(http.MethodPost, "/logs/_search", strings.NewReader(fmt.Sprintf(`%s`, buildBothQuery())))
-	// Inject an explicit sort that isn't _score.
-	req.Body = io.NopCloser(strings.NewReader(fmt.Sprintf(`{"sort":[{"@timestamp":"desc"}],%s`, strings.TrimPrefix(buildBothQuery(), "{"))))
+	// Inject an explicit sort that isn't _score — should fall back to hot-only passthrough.
+	req := httptest.NewRequest(http.MethodPost, "/logs/_search", strings.NewReader(fmt.Sprintf(`{"sort":[{"@timestamp":"desc"}],%s`, strings.TrimPrefix(buildBothQuery(), "{"))))
 	req.Header.Set("Authorization", validToken)
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	p.ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	// Graceful degradation: passthrough to OpenSearch (200), not 400.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (hot-only fallback), got %d: %s", w.Code, w.Body.String())
 	}
 }
 
