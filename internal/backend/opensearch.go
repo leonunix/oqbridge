@@ -19,12 +19,16 @@ type OpenSearch struct {
 }
 
 // NewOpenSearch creates a new OpenSearch backend client.
-func NewOpenSearch(baseURL, username, password string) *OpenSearch {
+// If httpClient is nil, a default client is used.
+func NewOpenSearch(baseURL, username, password string, httpClient *http.Client) *OpenSearch {
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
 	return &OpenSearch{
 		baseURL:  baseURL,
 		username: username,
 		password: password,
-		client:   &http.Client{},
+		client:   httpClient,
 	}
 }
 

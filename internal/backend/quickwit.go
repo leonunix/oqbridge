@@ -22,12 +22,16 @@ type Quickwit struct {
 }
 
 // NewQuickwit creates a new Quickwit backend client.
-func NewQuickwit(baseURL, username, password string, compress bool) *Quickwit {
+// If httpClient is nil, a default client is used.
+func NewQuickwit(baseURL, username, password string, compress bool, httpClient *http.Client) *Quickwit {
+	if httpClient == nil {
+		httpClient = &http.Client{}
+	}
 	return &Quickwit{
 		baseURL:  baseURL,
 		username: username,
 		password: password,
-		client:   &http.Client{},
+		client:   httpClient,
 		compress: compress,
 	}
 }

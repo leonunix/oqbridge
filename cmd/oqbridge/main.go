@@ -35,10 +35,28 @@ func main() {
 		"retention_days", cfg.Retention.Days,
 	)
 
-	hotBackend := backend.NewOpenSearch(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password)
-	coldBackend := backend.NewQuickwit(cfg.Quickwit.URL, cfg.Quickwit.Username, cfg.Quickwit.Password, false)
+	osClient, err := util.NewHTTPClient(cfg.OpenSearch.TLSConfig)
+	if err != nil {
+		slog.Error("failed to create OpenSearch HTTP client", "error", err)
+		os.Exit(1)
+	}
+	qwClient, err := util.NewHTTPClient(cfg.Quickwit.TLSConfig)
+	if err != nil {
+		slog.Error("failed to create Quickwit HTTP client", "error", err)
+		os.Exit(1)
+	}
 
-	p, err := proxy.New(cfg, hotBackend, coldBackend)
+	hotBackend := backend.NewOpenSearch(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)
+	coldBackend := backend.NewQuickwit(cfg.Quickwit.URL, cfg.Quickwit.Username, cfg.Quickwit.Password, false, qwClient)
+
+	// Build a custom transport for the reverse proxy (shares TLS settings with OpenSearch).
+	osTransport, err := util.NewTLSTransport(cfg.OpenSearch.TLSConfig)
+	if err != nil {
+		slog.Error("failed to create OpenSearch TLS transport", "error", err)
+		os.Exit(1)
+	}
+
+	p, err := proxy.New(cfg, hotBackend, coldBackend, osTransport)
 	if err != nil {
 		slog.Error("failed to initialize proxy", "error", err)
 		os.Exit(1)

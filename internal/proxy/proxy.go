@@ -37,13 +37,17 @@ type Proxy struct {
 }
 
 // New creates a new Proxy instance.
-func New(cfg *config.Config, hot *backend.OpenSearch, cold *backend.Quickwit) (*Proxy, error) {
+// If transport is non-nil it is used by the reverse proxy (e.g. for custom TLS).
+func New(cfg *config.Config, hot *backend.OpenSearch, cold *backend.Quickwit, transport http.RoundTripper) (*Proxy, error) {
 	osURL, err := url.Parse(cfg.OpenSearch.URL)
 	if err != nil {
 		return nil, err
 	}
 
 	rp := httputil.NewSingleHostReverseProxy(osURL)
+	if transport != nil {
+		rp.Transport = transport
+	}
 	originalDirector := rp.Director
 	rp.Director = func(req *http.Request) {
 		originalDirector(req)

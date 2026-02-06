@@ -87,9 +87,9 @@ func newTestProxy(t *testing.T, osURL, qwURL string) *Proxy {
 			TimestampField: "@timestamp",
 		},
 	}
-	hot := backend.NewOpenSearch(osURL, "", "")
-	cold := backend.NewQuickwit(qwURL, "", "", false)
-	p, err := New(cfg, hot, cold)
+	hot := backend.NewOpenSearch(osURL, "", "", nil)
+	cold := backend.NewQuickwit(qwURL, "", "", false, nil)
+	p, err := New(cfg, hot, cold, nil)
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}

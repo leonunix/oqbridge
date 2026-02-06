@@ -26,7 +26,7 @@ func TestQuickwit_Search_Endpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	qw := NewQuickwit(srv.URL, "", "", false)
+	qw := NewQuickwit(srv.URL, "", "", false, nil)
 	if _, err := qw.Search(context.Background(), "logs", []byte(`{"query":{"match_all":{}}}`)); err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestQuickwit_BulkIngest_GzipCompression(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	qw := NewQuickwit(srv.URL, "", "", true)
+	qw := NewQuickwit(srv.URL, "", "", true, nil)
 
 	docs := []json.RawMessage{
 		json.RawMessage(`{"_source":{"a":1}}`),
@@ -90,7 +90,7 @@ func TestQuickwit_Search_Non2xxReturnsHTTPStatusError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	qw := NewQuickwit(srv.URL, "", "", false)
+	qw := NewQuickwit(srv.URL, "", "", false, nil)
 	_, err := qw.Search(context.Background(), "logs", []byte(`{}`))
 	if err == nil {
 		t.Fatalf("expected error")
@@ -115,7 +115,7 @@ func TestQuickwit_IndexExists_Found(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	qw := NewQuickwit(srv.URL, "", "", false)
+	qw := NewQuickwit(srv.URL, "", "", false, nil)
 	exists, err := qw.IndexExists(context.Background(), "logs")
 	if err != nil {
 		t.Fatalf("IndexExists: %v", err)
@@ -131,7 +131,7 @@ func TestQuickwit_IndexExists_NotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	qw := NewQuickwit(srv.URL, "", "", false)
+	qw := NewQuickwit(srv.URL, "", "", false, nil)
 	exists, err := qw.IndexExists(context.Background(), "logs")
 	if err != nil {
 		t.Fatalf("IndexExists: %v", err)
@@ -157,7 +157,7 @@ func TestQuickwit_CreateIndex_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	qw := NewQuickwit(srv.URL, "", "", false)
+	qw := NewQuickwit(srv.URL, "", "", false, nil)
 	if err := qw.CreateIndex(context.Background(), "logs", "@timestamp"); err != nil {
 		t.Fatalf("CreateIndex: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestQuickwit_CreateIndex_Error(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	qw := NewQuickwit(srv.URL, "", "", false)
+	qw := NewQuickwit(srv.URL, "", "", false, nil)
 	err := qw.CreateIndex(context.Background(), "logs", "@timestamp")
 	if err == nil {
 		t.Fatalf("expected error")

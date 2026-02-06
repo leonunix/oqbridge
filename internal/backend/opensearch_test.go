@@ -33,7 +33,7 @@ func TestOpenSearch_Authenticate_StatusCodes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	os := NewOpenSearch(srv.URL, "", "")
+	os := NewOpenSearch(srv.URL, "", "", nil)
 
 	if err := os.Authenticate(context.Background(), token); err != nil {
 		t.Fatalf("expected nil, got %v", err)
@@ -93,7 +93,7 @@ func TestOpenSearch_SearchAs_AuthHeaderVsServiceAccount(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	os := NewOpenSearch(srv.URL, "svc", "pw")
+	os := NewOpenSearch(srv.URL, "svc", "pw", nil)
 	body := []byte(`{"query":{"match_all":{}}}`)
 
 	if _, err := os.SearchAs(context.Background(), "idx", body, token); err != nil {
@@ -115,7 +115,7 @@ func TestOpenSearch_SearchAs_Non2xxReturnsHTTPStatusError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	os := NewOpenSearch(srv.URL, "", "")
+	os := NewOpenSearch(srv.URL, "", "", nil)
 	_, err := os.SearchAs(context.Background(), "idx", []byte(`{}`), "Basic whatever")
 	if err == nil {
 		t.Fatalf("expected error")
@@ -167,7 +167,7 @@ func TestOpenSearch_SlicedScroll_InsertsSliceClause(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	os := NewOpenSearch(srv.URL, "svc", "pw")
+	os := NewOpenSearch(srv.URL, "svc", "pw", nil)
 
 	res, err := os.SlicedScroll(context.Background(), "idx", []byte(`{"size":1,"query":{"match_all":{}}}`), "", &SlicedScrollConfig{
 		SliceID:    1,

@@ -23,16 +23,23 @@ type ServerConfig struct {
 	Listen string `koanf:"listen"`
 }
 
+type TLSConfig struct {
+	SkipVerify bool   `koanf:"tls_skip_verify"` // Skip TLS certificate verification (insecure, for dev/test).
+	CACert     string `koanf:"ca_cert"`          // Path to CA certificate file for self-signed certs.
+}
+
 type OpenSearchConfig struct {
 	URL      string `koanf:"url"`
 	Username string `koanf:"username"`
 	Password string `koanf:"password"`
+	TLSConfig `koanf:",squash"`
 }
 
 type QuickwitConfig struct {
 	URL      string `koanf:"url"`
 	Username string `koanf:"username"`
 	Password string `koanf:"password"`
+	TLSConfig `koanf:",squash"`
 }
 
 type RetentionConfig struct {

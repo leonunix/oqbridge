@@ -12,6 +12,7 @@ import (
 	"github.com/leonunix/oqbridge/internal/config"
 	"github.com/leonunix/oqbridge/internal/migration"
 	"github.com/leonunix/oqbridge/internal/util"
+
 	"github.com/robfig/cron/v3"
 )
 
@@ -38,8 +39,19 @@ func main() {
 		"indices", cfg.Migration.Indices,
 	)
 
-	hot := backend.NewOpenSearch(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password)
-	cold := backend.NewQuickwit(cfg.Quickwit.URL, cfg.Quickwit.Username, cfg.Quickwit.Password, cfg.Migration.Compress)
+	osClient, err := util.NewHTTPClient(cfg.OpenSearch.TLSConfig)
+	if err != nil {
+		slog.Error("failed to create OpenSearch HTTP client", "error", err)
+		os.Exit(1)
+	}
+	qwClient, err := util.NewHTTPClient(cfg.Quickwit.TLSConfig)
+	if err != nil {
+		slog.Error("failed to create Quickwit HTTP client", "error", err)
+		os.Exit(1)
+	}
+
+	hot := backend.NewOpenSearch(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)
+	cold := backend.NewQuickwit(cfg.Quickwit.URL, cfg.Quickwit.Username, cfg.Quickwit.Password, cfg.Migration.Compress, qwClient)
 
 	migrator, err := migration.NewMigrator(cfg, hot, cold)
 	if err != nil {

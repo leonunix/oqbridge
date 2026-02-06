@@ -9,6 +9,8 @@ opensearch:
   url: "http://localhost:9201"
   username: ""
   password: ""
+  # tls_skip_verify: false   # Skip TLS certificate verification (insecure, for dev/test)
+  # ca_cert: ""               # Path to CA certificate file for self-signed certs
 
 # Quickwit connection.
 # Quickwit does not share OpenSearch's user system. The credentials below
@@ -18,6 +20,8 @@ quickwit:
   url: "http://localhost:7280"
   username: ""
   password: ""
+  # tls_skip_verify: false   # Skip TLS certificate verification (insecure, for dev/test)
+  # ca_cert: ""               # Path to CA certificate file for self-signed certs
 
 retention:
   days: 30
