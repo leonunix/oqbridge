@@ -53,7 +53,9 @@ func main() {
 	hot := backend.NewOpenSearch(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)
 	cold := backend.NewQuickwit(cfg.Quickwit.URL, cfg.Quickwit.Username, cfg.Quickwit.Password, cfg.Migration.Compress, qwClient)
 
-	migrator, err := migration.NewMigrator(cfg, hot, cold)
+	lock := backend.NewOpenSearchLock(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)
+
+	migrator, err := migration.NewMigrator(cfg, hot, cold, migration.WithDistLock(lock))
 	if err != nil {
 		slog.Error("failed to initialize migrator", "error", err)
 		os.Exit(1)
