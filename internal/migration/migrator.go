@@ -27,23 +27,46 @@ type Migrator struct {
 	cfg              *config.Config
 	hot              HotClient
 	cold             ColdClient
-	checkpoint       *CheckpointStore
+	checkpoint       CheckpointStore
+	lock             DistLock // optional distributed lock to prevent multi-instance duplication
+	lockTTL          time.Duration
 	progressInterval time.Duration
 }
 
-// NewMigrator creates a new Migrator.
-func NewMigrator(cfg *config.Config, hot HotClient, cold ColdClient) (*Migrator, error) {
-	cpStore, err := NewCheckpointStore(cfg.Migration.CheckpointDir)
-	if err != nil {
-		return nil, fmt.Errorf("initializing checkpoint store: %w", err)
+// MigratorOption configures optional Migrator behavior.
+type MigratorOption func(*Migrator)
+
+// WithDistLock enables distributed locking to prevent multiple instances
+// from migrating the same index concurrently.
+func WithDistLock(lock DistLock) MigratorOption {
+	return func(m *Migrator) {
+		m.lock = lock
 	}
-	return &Migrator{
+}
+
+// WithLockTTL sets the TTL for distributed locks. Defaults to 2 hours.
+func WithLockTTL(ttl time.Duration) MigratorOption {
+	return func(m *Migrator) {
+		m.lockTTL = ttl
+	}
+}
+
+// NewMigrator creates a new Migrator. A CheckpointStore is required for
+// persisting migration progress (use OpenSearchCheckpointStore for
+// multi-instance deployments, or LocalCheckpointStore for single-instance/testing).
+func NewMigrator(cfg *config.Config, hot HotClient, cold ColdClient, cpStore CheckpointStore, opts ...MigratorOption) (*Migrator, error) {
+	m := &Migrator{
 		cfg:              cfg,
 		hot:              hot,
 		cold:             cold,
 		checkpoint:       cpStore,
+		lockTTL:          2 * time.Hour,
 		progressInterval: 10 * time.Second,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m, nil
 }
 
 // MigrateAll migrates all configured indices.
@@ -93,6 +116,24 @@ func containsWildcard(s string) bool {
 // MigrateIndex migrates documents older than the retention threshold from
 // OpenSearch to Quickwit using parallel sliced scroll workers.
 func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
+	// Acquire distributed lock if configured, preventing multiple instances
+	// from migrating the same index concurrently.
+	if m.lock != nil {
+		acquired, err := m.lock.Acquire(ctx, index, m.lockTTL)
+		if err != nil {
+			return fmt.Errorf("acquiring migration lock for %s: %w", index, err)
+		}
+		if !acquired {
+			slog.Info("skipping index, migration lock held by another instance", "index", index)
+			return nil
+		}
+		defer func() {
+			if err := m.lock.Release(ctx, index); err != nil {
+				slog.Warn("failed to release migration lock", "index", index, "error", err)
+			}
+		}()
+	}
+
 	tsField := m.cfg.TimestampFieldForIndex(index)
 
 	// Ensure Quickwit index exists before migration.

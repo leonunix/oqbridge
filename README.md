@@ -52,6 +52,7 @@ Client ──► oqbridge (proxy) ──┬──► OpenSearch  (hot, <30d)
 - **Parallel sliced scroll** — Multiple workers read from OpenSearch concurrently using sliced scroll API.
 - **Gzip compression** — Compress data over the network to Quickwit (significant savings for large volumes).
 - **Checkpoint/resume** — Interrupted migrations automatically resume from the last completed slice.
+- **Multi-instance safe** — Distributed locking (via OpenSearch) prevents multiple `oqbridge-migrate` instances from migrating the same index concurrently. Checkpoints and watermarks are stored in OpenSearch so all instances share migration progress.
 - **Real-time progress** — Logs docs/sec, total migrated, and elapsed time every 10 seconds.
 - **Two run modes** — One-shot (`--once`) for crontab, or built-in cron daemon mode.
 
@@ -121,7 +122,6 @@ See [configs/oqbridge.yaml](configs/oqbridge.yaml) for the full configuration re
 | `migration.batch_size` | `5000` | Documents per scroll batch |
 | `migration.workers` | `4` | Parallel sliced scroll workers |
 | `migration.compress` | `true` | Gzip compress data to Quickwit |
-| `migration.checkpoint_dir` | `/var/lib/oqbridge` | Checkpoint storage directory |
 | `migration.delete_after_migration` | `false` | Delete data from OpenSearch after migration |
 | `migration.indices` | — | Index patterns to migrate (supports wildcards: `*`, `logs-*`) |
 
@@ -208,6 +208,21 @@ Queries using explicit non-`_score` sorts, `search_after`, or PIT are rejected w
 2. **Any node**: Deploy `oqbridge` proxy where your clients can reach it. It routes queries to both backends.
 
 Both binaries share the same config file format.
+
+### Multi-Instance Migration
+
+You can safely run multiple `oqbridge-migrate` instances against the same OpenSearch cluster. Coordination is fully automatic:
+
+1. **Distributed lock** — Before migrating an index, an instance acquires a lock stored in the `.oqbridge-locks` OpenSearch index (using atomic `op_type=create`). If another instance already holds the lock, the index is skipped.
+2. **Shared checkpoint/watermark** — Migration progress is stored in the `.oqbridge-state` OpenSearch index, not local files. Every instance sees what time range has already been migrated and resumes from there.
+3. **Stale lock cleanup** — Locks include a TTL (default: 2 hours). If an instance crashes, the lock expires and another instance can take over, resuming from the last shared checkpoint.
+
+```text
+Instance A: acquire lock → migrate [T0, T1) → save watermark T1 → release lock
+Instance B: acquire lock → read watermark T1 → migrate [T1, T2) → save watermark T2 → release lock
+```
+
+No external coordination service (etcd, Consul, etc.) is required — OpenSearch itself is used as the coordination backend.
 
 ## License
 

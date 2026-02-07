@@ -79,7 +79,6 @@ config:
     batch_size: 5000
     workers: 4
     compress: true
-    checkpoint_dir: "/var/lib/oqbridge"
     delete_after_migration: false
     indices:
       - "logs-*"

@@ -52,6 +52,7 @@ OpenSearch 节点                          远端
 - **并行 Sliced Scroll** — 多个 worker 使用 sliced scroll API 并发读取 OpenSearch。
 - **Gzip 压缩** — 压缩传输到 Quickwit 的数据（大数据量下显著节省带宽）。
 - **断点续传** — 中断的迁移自动从上次完成的 slice 恢复。
+- **多实例安全** — 通过 OpenSearch 实现分布式锁，防止多个 `oqbridge-migrate` 实例同时迁移同一索引。Checkpoint 和 watermark 存储在 OpenSearch 中，所有实例共享迁移进度。
 - **实时进度** — 每 10 秒输出 docs/sec、已迁移数量和耗时。
 - **两种运行模式** — 单次执行 (`--once`) 适配 crontab，或内置 cron 守护模式。
 
@@ -121,7 +122,6 @@ cp configs/oqbridge.yaml oqbridge.yaml
 | `migration.batch_size` | `5000` | 每批 scroll 文档数 |
 | `migration.workers` | `4` | 并行 sliced scroll worker 数 |
 | `migration.compress` | `true` | 启用 Gzip 压缩传输 |
-| `migration.checkpoint_dir` | `/var/lib/oqbridge` | 断点存储目录 |
 | `migration.delete_after_migration` | `false` | 迁移后删除 OpenSearch 中的数据 |
 | `migration.indices` | — | 需要迁移的索引模式（支持通配符：`*`、`logs-*`） |
 
@@ -206,6 +206,21 @@ oqbridge 会将所有非搜索请求原样转发到 OpenSearch。对于搜索拦
 2. **任意节点**：部署 `oqbridge` 代理，让客户端通过它访问两个后端。
 
 两个二进制共用同一配置文件格式。
+
+### 多实例迁移
+
+可以安全地在同一 OpenSearch 集群上运行多个 `oqbridge-migrate` 实例，协调完全自动：
+
+1. **分布式锁** — 迁移索引前，实例在 `.oqbridge-locks` OpenSearch 索引中获取锁（使用原子性 `op_type=create`）。如果另一个实例已持有锁，则跳过该索引。
+2. **共享 checkpoint/watermark** — 迁移进度存储在 `.oqbridge-state` OpenSearch 索引中，而非本地文件。每个实例都能看到已迁移到哪个时间点，从断点继续。
+3. **过期锁自动清理** — 锁包含 TTL（默认：2 小时）。如果某实例崩溃，锁过期后其他实例可以接管，从共享的 checkpoint 恢复。
+
+```text
+实例 A: 获取锁 → 迁移 [T0, T1) → 存 watermark T1 → 释放锁
+实例 B: 获取锁 → 读 watermark T1 → 迁移 [T1, T2) → 存 watermark T2 → 释放锁
+```
+
+无需额外的协调服务（etcd、Consul 等）—— 直接复用 OpenSearch 本身作为协调后端。
 
 ## 许可证
 
