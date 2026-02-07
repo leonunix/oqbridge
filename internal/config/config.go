@@ -114,7 +114,8 @@ func setDefaults(cfg *Config) {
 	if cfg.Migration.MigrateAfterDays <= 0 {
 		cfg.Migration.MigrateAfterDays = cfg.Retention.Days - 5
 		if cfg.Migration.MigrateAfterDays <= 0 {
-			cfg.Migration.MigrateAfterDays = cfg.Retention.Days
+			// Ensure default is always less than Retention.Days to pass validation.
+			cfg.Migration.MigrateAfterDays = max(1, cfg.Retention.Days-1)
 		}
 	}
 	if cfg.Migration.Schedule == "" {
