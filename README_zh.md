@@ -122,7 +122,6 @@ cp configs/oqbridge.yaml oqbridge.yaml
 | `migration.batch_size` | `5000` | 每批 scroll 文档数 |
 | `migration.workers` | `4` | 并行 sliced scroll worker 数 |
 | `migration.compress` | `true` | 启用 Gzip 压缩传输 |
-| `migration.checkpoint_dir` | `/var/lib/oqbridge` | 本地断点存储目录（仅作 fallback；启用 OpenSearch 存储时不使用） |
 | `migration.delete_after_migration` | `false` | 迁移后删除 OpenSearch 中的数据 |
 | `migration.indices` | — | 需要迁移的索引模式（支持通配符：`*`、`logs-*`） |
 

@@ -40,7 +40,6 @@ migration:
   batch_size: 5000            # Documents per scroll batch
   workers: 4                  # Parallel sliced scroll workers
   compress: true              # Gzip compress data sent to Quickwit
-  checkpoint_dir: "/var/lib/oqbridge"  # Checkpoint directory for resume support
   delete_after_migration: false
   # Indices to migrate (required)
   indices:

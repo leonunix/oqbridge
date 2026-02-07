@@ -51,34 +51,20 @@ func WithLockTTL(ttl time.Duration) MigratorOption {
 	}
 }
 
-// WithCheckpointStore overrides the default local filesystem checkpoint store.
-// Use this with OpenSearchCheckpointStore for multi-instance deployments where
-// checkpoint and watermark state must be shared across instances.
-func WithCheckpointStore(store CheckpointStore) MigratorOption {
-	return func(m *Migrator) {
-		m.checkpoint = store
-	}
-}
-
-// NewMigrator creates a new Migrator.
-func NewMigrator(cfg *config.Config, hot HotClient, cold ColdClient, opts ...MigratorOption) (*Migrator, error) {
+// NewMigrator creates a new Migrator. A CheckpointStore is required for
+// persisting migration progress (use OpenSearchCheckpointStore for
+// multi-instance deployments, or LocalCheckpointStore for single-instance/testing).
+func NewMigrator(cfg *config.Config, hot HotClient, cold ColdClient, cpStore CheckpointStore, opts ...MigratorOption) (*Migrator, error) {
 	m := &Migrator{
 		cfg:              cfg,
 		hot:              hot,
 		cold:             cold,
+		checkpoint:       cpStore,
 		lockTTL:          2 * time.Hour,
 		progressInterval: 10 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(m)
-	}
-	// Fall back to local filesystem checkpoint store if no override was provided.
-	if m.checkpoint == nil {
-		cpStore, err := NewLocalCheckpointStore(cfg.Migration.CheckpointDir)
-		if err != nil {
-			return nil, fmt.Errorf("initializing checkpoint store: %w", err)
-		}
-		m.checkpoint = cpStore
 	}
 	return m, nil
 }

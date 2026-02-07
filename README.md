@@ -122,7 +122,6 @@ See [configs/oqbridge.yaml](configs/oqbridge.yaml) for the full configuration re
 | `migration.batch_size` | `5000` | Documents per scroll batch |
 | `migration.workers` | `4` | Parallel sliced scroll workers |
 | `migration.compress` | `true` | Gzip compress data to Quickwit |
-| `migration.checkpoint_dir` | `/var/lib/oqbridge` | Local checkpoint directory (fallback; not used when OpenSearch checkpoint store is active) |
 | `migration.delete_after_migration` | `false` | Delete data from OpenSearch after migration |
 | `migration.indices` | — | Index patterns to migrate (supports wildcards: `*`, `logs-*`) |
 

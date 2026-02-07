@@ -56,9 +56,8 @@ func main() {
 	lock := backend.NewOpenSearchLock(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)
 	cpStore := migration.NewOpenSearchCheckpointStore(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)
 
-	migrator, err := migration.NewMigrator(cfg, hot, cold,
+	migrator, err := migration.NewMigrator(cfg, hot, cold, cpStore,
 		migration.WithDistLock(lock),
-		migration.WithCheckpointStore(cpStore),
 	)
 	if err != nil {
 		slog.Error("failed to initialize migrator", "error", err)

@@ -56,7 +56,6 @@ type MigrationConfig struct {
 	BatchSize            int      `koanf:"batch_size"`
 	Workers              int      `koanf:"workers"`              // Number of parallel sliced scroll workers.
 	Compress             bool     `koanf:"compress"`             // Gzip compress data sent to Quickwit.
-	CheckpointDir        string   `koanf:"checkpoint_dir"`       // Directory to store migration checkpoints.
 	DeleteAfterMigration bool     `koanf:"delete_after_migration"`
 	Indices              []string `koanf:"indices"`
 }
@@ -120,9 +119,6 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Migration.Schedule == "" {
 		cfg.Migration.Schedule = "0 * * * *"
-	}
-	if cfg.Migration.CheckpointDir == "" {
-		cfg.Migration.CheckpointDir = "/var/lib/oqbridge"
 	}
 	if cfg.Logging.Level == "" {
 		cfg.Logging.Level = "info"

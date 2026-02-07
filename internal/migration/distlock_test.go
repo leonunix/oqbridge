@@ -221,8 +221,12 @@ func TestMigrator_WithDistLock_Option(t *testing.T) {
 	cold := newFakeCold()
 	lock := newFakeLock("test")
 
-	cfg := defaultTestConfig(dir)
-	m, err := NewMigrator(cfg, hot, cold, WithDistLock(lock), WithLockTTL(30*time.Minute))
+	cfg := defaultTestConfig()
+	cpStore, err := NewLocalCheckpointStore(dir)
+	if err != nil {
+		t.Fatalf("NewLocalCheckpointStore: %v", err)
+	}
+	m, err := NewMigrator(cfg, hot, cold, cpStore, WithDistLock(lock), WithLockTTL(30*time.Minute))
 	if err != nil {
 		t.Fatalf("NewMigrator: %v", err)
 	}
@@ -248,15 +252,14 @@ func TestMigrator_WithDistLock_Option(t *testing.T) {
 }
 
 // defaultTestConfig returns a config suitable for tests.
-func defaultTestConfig(checkpointDir string) *config.Config {
+func defaultTestConfig() *config.Config {
 	return &config.Config{
 		Retention: config.RetentionConfig{Days: 30, TimestampField: "@timestamp"},
 		Migration: config.MigrationConfig{
-			Schedule:      "* * * * *",
-			BatchSize:     2,
-			Workers:       2,
-			CheckpointDir: checkpointDir,
-			Indices:       []string{"logs"},
+			Schedule:  "* * * * *",
+			BatchSize: 2,
+			Workers:   2,
+			Indices:   []string{"logs"},
 		},
 	}
 }

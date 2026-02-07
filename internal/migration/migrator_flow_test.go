@@ -154,14 +154,17 @@ func newTestMigrator(t *testing.T, hot HotClient, cold ColdClient, checkpointDir
 	cfg := &config.Config{
 		Retention: config.RetentionConfig{Days: 30, TimestampField: "@timestamp"},
 		Migration: config.MigrationConfig{
-			Schedule:      "* * * * *",
-			BatchSize:     2,
-			Workers:       2,
-			CheckpointDir: checkpointDir,
-			Indices:       []string{"logs"},
+			Schedule:  "* * * * *",
+			BatchSize: 2,
+			Workers:   2,
+			Indices:   []string{"logs"},
 		},
 	}
-	m, err := NewMigrator(cfg, hot, cold)
+	cpStore, err := NewLocalCheckpointStore(checkpointDir)
+	if err != nil {
+		t.Fatalf("NewLocalCheckpointStore: %v", err)
+	}
+	m, err := NewMigrator(cfg, hot, cold, cpStore)
 	if err != nil {
 		t.Fatalf("NewMigrator: %v", err)
 	}
@@ -343,14 +346,17 @@ func TestMigrator_MigrateAll_WildcardResolution(t *testing.T) {
 	cfg := &config.Config{
 		Retention: config.RetentionConfig{Days: 30, TimestampField: "@timestamp"},
 		Migration: config.MigrationConfig{
-			Schedule:      "* * * * *",
-			BatchSize:     2,
-			Workers:       2,
-			CheckpointDir: dir,
-			Indices:       []string{"logs-*"},
+			Schedule:  "* * * * *",
+			BatchSize: 2,
+			Workers:   2,
+			Indices:   []string{"logs-*"},
 		},
 	}
-	m, err := NewMigrator(cfg, hot, cold)
+	cpStore, err := NewLocalCheckpointStore(dir)
+	if err != nil {
+		t.Fatalf("NewLocalCheckpointStore: %v", err)
+	}
+	m, err := NewMigrator(cfg, hot, cold, cpStore)
 	if err != nil {
 		t.Fatalf("NewMigrator: %v", err)
 	}
