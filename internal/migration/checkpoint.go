@@ -31,27 +31,38 @@ type Watermark struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-// CheckpointStore manages checkpoint persistence.
-type CheckpointStore struct {
+// CheckpointStore is the interface for checkpoint and watermark persistence.
+// Implementations include LocalCheckpointStore (local filesystem) and
+// OpenSearchCheckpointStore (shared via OpenSearch for multi-instance deployments).
+type CheckpointStore interface {
+	Load(index string) (*Checkpoint, error)
+	Save(cp *Checkpoint) error
+	MarkComplete(index string) error
+	LoadWatermark(index string) (*Watermark, error)
+	SaveWatermark(wm *Watermark) error
+}
+
+// LocalCheckpointStore manages checkpoint persistence on the local filesystem.
+type LocalCheckpointStore struct {
 	dir string
 }
 
-// NewCheckpointStore creates a new checkpoint store in the given directory.
-func NewCheckpointStore(dir string) (*CheckpointStore, error) {
+// NewLocalCheckpointStore creates a new local checkpoint store in the given directory.
+func NewLocalCheckpointStore(dir string) (*LocalCheckpointStore, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("creating checkpoint dir %s: %w", dir, err)
 	}
-	return &CheckpointStore{dir: dir}, nil
+	return &LocalCheckpointStore{dir: dir}, nil
 }
 
-func (s *CheckpointStore) path(index string) string {
+func (s *LocalCheckpointStore) path(index string) string {
 	// Replace slashes and wildcards for safe filenames.
 	safe := filepath.Base(index)
 	return filepath.Join(s.dir, safe+".checkpoint.json")
 }
 
 // Load reads a checkpoint for the given index. Returns nil if no checkpoint exists.
-func (s *CheckpointStore) Load(index string) (*Checkpoint, error) {
+func (s *LocalCheckpointStore) Load(index string) (*Checkpoint, error) {
 	data, err := os.ReadFile(s.path(index))
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -73,7 +84,7 @@ func (s *CheckpointStore) Load(index string) (*Checkpoint, error) {
 }
 
 // Save persists the checkpoint to disk.
-func (s *CheckpointStore) Save(cp *Checkpoint) error {
+func (s *LocalCheckpointStore) Save(cp *Checkpoint) error {
 	cp.UpdatedAt = time.Now().UTC()
 	data, err := json.MarshalIndent(cp, "", "  ")
 	if err != nil {
@@ -86,7 +97,7 @@ func (s *CheckpointStore) Save(cp *Checkpoint) error {
 }
 
 // MarkComplete marks the checkpoint as completed.
-func (s *CheckpointStore) MarkComplete(index string) error {
+func (s *LocalCheckpointStore) MarkComplete(index string) error {
 	cp, err := s.Load(index)
 	if err != nil {
 		return err
@@ -111,14 +122,14 @@ func (cp *Checkpoint) IsSliceDone(sliceID int) bool {
 	return false
 }
 
-func (s *CheckpointStore) watermarkPath(index string) string {
+func (s *LocalCheckpointStore) watermarkPath(index string) string {
 	safe := filepath.Base(index)
 	return filepath.Join(s.dir, safe+".watermark.json")
 }
 
 // LoadWatermark reads the watermark for the given index.
 // Returns nil if no watermark exists (first run).
-func (s *CheckpointStore) LoadWatermark(index string) (*Watermark, error) {
+func (s *LocalCheckpointStore) LoadWatermark(index string) (*Watermark, error) {
 	data, err := os.ReadFile(s.watermarkPath(index))
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -134,7 +145,7 @@ func (s *CheckpointStore) LoadWatermark(index string) (*Watermark, error) {
 }
 
 // SaveWatermark persists the watermark to disk after a successful migration.
-func (s *CheckpointStore) SaveWatermark(wm *Watermark) error {
+func (s *LocalCheckpointStore) SaveWatermark(wm *Watermark) error {
 	wm.UpdatedAt = time.Now().UTC()
 	data, err := json.MarshalIndent(wm, "", "  ")
 	if err != nil {

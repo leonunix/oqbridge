@@ -220,9 +220,9 @@ func TestMigrator_MigrateIndex_Resume_SkipsCompletedSlice(t *testing.T) {
 	dir := t.TempDir()
 
 	// Pre-create a checkpoint where slice 0 is done.
-	store, err := NewCheckpointStore(dir)
+	store, err := NewLocalCheckpointStore(dir)
 	if err != nil {
-		t.Fatalf("NewCheckpointStore: %v", err)
+		t.Fatalf("NewLocalCheckpointStore: %v", err)
 	}
 	if err := store.Save(&Checkpoint{Index: "logs", SlicesDone: []int{0}}); err != nil {
 		t.Fatalf("Save: %v", err)

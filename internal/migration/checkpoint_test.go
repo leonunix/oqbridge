@@ -4,9 +4,9 @@ import "testing"
 
 func TestCheckpointStore_SaveLoadAndComplete(t *testing.T) {
 	dir := t.TempDir()
-	store, err := NewCheckpointStore(dir)
+	store, err := NewLocalCheckpointStore(dir)
 	if err != nil {
-		t.Fatalf("NewCheckpointStore: %v", err)
+		t.Fatalf("NewLocalCheckpointStore: %v", err)
 	}
 
 	cp := &Checkpoint{

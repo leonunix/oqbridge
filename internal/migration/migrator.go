@@ -27,7 +27,7 @@ type Migrator struct {
 	cfg              *config.Config
 	hot              HotClient
 	cold             ColdClient
-	checkpoint       *CheckpointStore
+	checkpoint       CheckpointStore
 	lock             DistLock // optional distributed lock to prevent multi-instance duplication
 	lockTTL          time.Duration
 	progressInterval time.Duration
@@ -51,9 +51,18 @@ func WithLockTTL(ttl time.Duration) MigratorOption {
 	}
 }
 
+// WithCheckpointStore overrides the default local filesystem checkpoint store.
+// Use this with OpenSearchCheckpointStore for multi-instance deployments where
+// checkpoint and watermark state must be shared across instances.
+func WithCheckpointStore(store CheckpointStore) MigratorOption {
+	return func(m *Migrator) {
+		m.checkpoint = store
+	}
+}
+
 // NewMigrator creates a new Migrator.
 func NewMigrator(cfg *config.Config, hot HotClient, cold ColdClient, opts ...MigratorOption) (*Migrator, error) {
-	cpStore, err := NewCheckpointStore(cfg.Migration.CheckpointDir)
+	cpStore, err := NewLocalCheckpointStore(cfg.Migration.CheckpointDir)
 	if err != nil {
 		return nil, fmt.Errorf("initializing checkpoint store: %w", err)
 	}
