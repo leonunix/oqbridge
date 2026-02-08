@@ -112,6 +112,7 @@ See [configs/oqbridge.yaml](configs/oqbridge.yaml) for the full configuration re
 | `retention.cold_days` | `365` | Cold data retention in Quickwit (days, 0 = forever) |
 | `retention.timestamp_field` | `@timestamp` | Default timestamp field |
 | `retention.index_fields` | — | Per-index timestamp field overrides |
+| `retention.index_cold_days` | — | Per-index cold retention overrides (days). Supports exact names or glob patterns (e.g., `security-audit-*: 1095`) |
 
 ### Migration Settings
 

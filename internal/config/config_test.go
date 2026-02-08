@@ -165,6 +165,82 @@ func TestTimestampFieldForIndex(t *testing.T) {
 	}
 }
 
+func TestColdDaysForIndex(t *testing.T) {
+	cfg := &Config{
+		Retention: RetentionConfig{
+			ColdDays: 365,
+			IndexColdDays: map[string]int{
+				"security-audit":  1095,
+				"compliance-*":    2555,
+			},
+		},
+	}
+
+	tests := []struct {
+		index string
+		want  int
+	}{
+		{"security-audit", 1095},       // exact match
+		{"compliance-2026", 2555},      // glob match
+		{"compliance-pci", 2555},       // glob match
+		{"logs-2026.01.01", 365},       // fallback to global
+		{"other", 365},                 // fallback to global
+	}
+
+	for _, tt := range tests {
+		if got := cfg.ColdDaysForIndex(tt.index); got != tt.want {
+			t.Errorf("ColdDaysForIndex(%q) = %d, want %d", tt.index, got, tt.want)
+		}
+	}
+}
+
+func TestColdDaysForIndex_ZeroGlobal(t *testing.T) {
+	cfg := &Config{
+		Retention: RetentionConfig{
+			ColdDays:      0, // forever
+			IndexColdDays: map[string]int{
+				"logs-*": 730,
+			},
+		},
+	}
+
+	if got := cfg.ColdDaysForIndex("logs-2026"); got != 730 {
+		t.Errorf("ColdDaysForIndex(logs-2026) = %d, want 730", got)
+	}
+	if got := cfg.ColdDaysForIndex("events"); got != 0 {
+		t.Errorf("ColdDaysForIndex(events) = %d, want 0 (forever)", got)
+	}
+}
+
+func TestLoad_IndexColdDays(t *testing.T) {
+	content := `
+opensearch:
+  url: "http://os:9200"
+quickwit:
+  url: "http://qw:7280"
+retention:
+  cold_days: 365
+  index_cold_days:
+    security-audit-*: 1095
+    compliance-*: 2555
+`
+	path := writeTempFile(t, content)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.ColdDaysForIndex("security-audit-2026"); got != 1095 {
+		t.Errorf("ColdDaysForIndex(security-audit-2026) = %d, want 1095", got)
+	}
+	if got := cfg.ColdDaysForIndex("compliance-pci"); got != 2555 {
+		t.Errorf("ColdDaysForIndex(compliance-pci) = %d, want 2555", got)
+	}
+	if got := cfg.ColdDaysForIndex("logs-2026"); got != 365 {
+		t.Errorf("ColdDaysForIndex(logs-2026) = %d, want 365", got)
+	}
+}
+
 func writeTempFile(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

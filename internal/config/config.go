@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -48,6 +49,7 @@ type RetentionConfig struct {
 	ColdDays       int               `koanf:"cold_days"`        // How long to keep data in Quickwit (0 = forever).
 	TimestampField string            `koanf:"timestamp_field"`
 	IndexFields    map[string]string `koanf:"index_fields"`
+	IndexColdDays  map[string]int    `koanf:"index_cold_days"`  // Per-index cold retention overrides (days). Supports exact names or glob patterns.
 }
 
 type MigrationConfig struct {
@@ -95,6 +97,21 @@ func (c *Config) TimestampFieldForIndex(index string) string {
 		return field
 	}
 	return c.Retention.TimestampField
+}
+
+// ColdDaysForIndex returns the cold retention period (in days) for the given index.
+// It checks for an exact match first, then tries glob pattern matching,
+// and falls back to the global ColdDays default.
+func (c *Config) ColdDaysForIndex(index string) int {
+	if days, ok := c.Retention.IndexColdDays[index]; ok {
+		return days
+	}
+	for pattern, days := range c.Retention.IndexColdDays {
+		if matched, _ := filepath.Match(pattern, index); matched {
+			return days
+		}
+	}
+	return c.Retention.ColdDays
 }
 
 func setDefaults(cfg *Config) {
