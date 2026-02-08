@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"os"
 
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/file"
@@ -57,6 +58,7 @@ type MigrationConfig struct {
 	Workers              int      `koanf:"workers"`              // Number of parallel sliced scroll workers.
 	Compress             bool     `koanf:"compress"`             // Gzip compress data sent to Quickwit.
 	DeleteAfterMigration bool     `koanf:"delete_after_migration"`
+	TempDir              string   `koanf:"temp_dir"`             // Directory for staging migration data on disk. Empty uses in-memory buffers.
 	Indices              []string `koanf:"indices"`
 }
 
@@ -143,6 +145,12 @@ func validate(cfg *Config) error {
 
 	if cfg.Migration.MigrateAfterDays >= cfg.Retention.Days {
 		return fmt.Errorf("migration.migrate_after_days (%d) must be less than retention.days (%d)", cfg.Migration.MigrateAfterDays, cfg.Retention.Days)
+	}
+
+	if cfg.Migration.TempDir != "" {
+		if err := os.MkdirAll(cfg.Migration.TempDir, 0755); err != nil {
+			return fmt.Errorf("migration.temp_dir %q: %w", cfg.Migration.TempDir, err)
+		}
 	}
 
 	return nil
