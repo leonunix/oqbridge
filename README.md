@@ -19,14 +19,14 @@ oqbridge consists of two separate binaries for clean separation of concerns:
 ```
 OpenSearch node                         Remote
 ┌───────────────────────────┐     ┌──────────────┐
-│  OpenSearch (localhost)    │     │   Quickwit   │
-│          ↑                 │     │      ↑       │
+│  OpenSearch (localhost)   │     │   Quickwit   │
+│          ↑                │     │      ↑       │
 │  oqbridge-migrate ────────┼─gzip┼──────┘       │
-│  (parallel sliced scroll)  │     │              │
+│  (parallel sliced scroll) │     │              │
 └───────────────────────────┘     └──────────────┘
 
 Client ──► oqbridge (proxy) ──┬──► OpenSearch  (hot, <30d)
-                               └──► Quickwit    (cold, ≥30d, auto-delete after 365d)
+                              └──► Quickwit    (cold, ≥30d, auto-delete after 365d)
 ```
 
 - **`oqbridge`** — Query proxy. Deploy anywhere. Routes searches to the correct backend based on time range, merges results transparently.
