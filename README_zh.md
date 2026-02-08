@@ -19,14 +19,14 @@ oqbridge 由两个独立的二进制文件组成，职责分离：
 ```
 OpenSearch 节点                          远端
 ┌───────────────────────────┐     ┌──────────────┐
-│  OpenSearch (localhost)    │     │   Quickwit   │
-│          ↑                 │     │      ↑       │
+│  OpenSearch (localhost)   │     │   Quickwit   │
+│          ↑                │     │      ↑       │
 │  oqbridge-migrate ────────┼─gzip┼──────┘       │
-│  (并行 sliced scroll)      │     │              │
+│  (并行 sliced scroll)     │     │              │
 └───────────────────────────┘     └──────────────┘
 
 客户端 ──► oqbridge (代理) ──┬──► OpenSearch  (热数据, <30天)
-                              └──► Quickwit    (冷数据, ≥30天, 365天后自动删除)
+                             └──► Quickwit    (冷数据, ≥30天, 365天后自动删除)
 ```
 
 - **`oqbridge`** — 查询代理。可部署在任意节点。根据时间范围将搜索请求路由到正确的后端，透明合并结果。
