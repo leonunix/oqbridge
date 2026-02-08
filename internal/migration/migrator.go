@@ -31,6 +31,7 @@ type Migrator struct {
 	lock             DistLock // optional distributed lock to prevent multi-instance duplication
 	lockTTL          time.Duration
 	progressInterval time.Duration
+	running          sync.Mutex // prevents overlapping MigrateAll runs from cron
 }
 
 // MigratorOption configures optional Migrator behavior.
@@ -73,24 +74,38 @@ func NewMigrator(cfg *config.Config, hot HotClient, cold ColdClient, cpStore Che
 // Wildcard patterns (e.g., "logs-*", "*") are resolved to concrete index
 // names via the OpenSearch _cat/indices API before migration.
 func (m *Migrator) MigrateAll(ctx context.Context) error {
+	// Prevent overlapping runs when cron fires while a previous migration
+	// is still in progress.
+	if !m.running.TryLock() {
+		slog.Warn("migration already in progress, skipping this run")
+		return nil
+	}
+	defer m.running.Unlock()
+
 	patterns := m.cfg.Migration.Indices
 	if len(patterns) == 0 {
 		slog.Info("no indices configured for migration, skipping")
 		return nil
 	}
 
+	var allErrors []error
 	for _, pattern := range patterns {
 		concrete, err := m.resolvePattern(ctx, pattern)
 		if err != nil {
 			slog.Error("failed to resolve index pattern", "pattern", pattern, "error", err)
+			allErrors = append(allErrors, fmt.Errorf("resolving %q: %w", pattern, err))
 			continue
 		}
 		for _, index := range concrete {
 			if err := m.MigrateIndex(ctx, index); err != nil {
 				slog.Error("migration failed for index", "index", index, "error", err)
+				allErrors = append(allErrors, fmt.Errorf("migrating %s: %w", index, err))
 				continue
 			}
 		}
+	}
+	if len(allErrors) > 0 {
+		return fmt.Errorf("migration completed with %d errors, first: %w", len(allErrors), allErrors[0])
 	}
 	return nil
 }
@@ -128,7 +143,13 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 			return nil
 		}
 		defer func() {
-			if err := m.lock.Release(ctx, index); err != nil {
+			// Use a separate context for lock release so that it succeeds even
+			// when the parent context has been cancelled (e.g. SIGTERM shutdown).
+			// Otherwise the lock remains held until TTL expires, blocking the
+			// next scheduled migration run.
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := m.lock.Release(releaseCtx, index); err != nil {
 				slog.Warn("failed to release migration lock", "index", index, "error", err)
 			}
 		}()
@@ -178,9 +199,15 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 	// Initialize checkpoint if not resuming.
 	if cp == nil {
 		cp = &Checkpoint{
-			Index:     index,
-			StartedAt: time.Now().UTC(),
+			Index:      index,
+			StartedAt:  time.Now().UTC(),
+			CutoffTime: cutoffTime,
 		}
+	} else if !cp.CutoffTime.IsZero() {
+		// When resuming, use the original cutoff time to prevent time drift.
+		// If we recalculate from time.Now(), documents in the gap between the
+		// original and new cutoff may be missed or duplicated.
+		cutoffTime = cp.CutoffTime
 	}
 
 	// Snapshot completed slices at start to avoid data races while workers run.
@@ -247,11 +274,17 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 
 	// Delete migrated data from OpenSearch if configured.
 	if m.cfg.Migration.DeleteAfterMigration && totalMigrated > 0 {
+		// Use a safety margin: only delete documents older than
+		// (cutoff - 1 hour) to avoid deleting late-arriving documents
+		// that were written to OpenSearch after our scroll finished but
+		// with timestamps within the migration window.
+		safeDeleteCutoff := cutoffTime.Add(-1 * time.Hour)
 		slog.Info("deleting migrated documents from opensearch",
 			"index", index,
 			"count", totalMigrated,
+			"safe_delete_cutoff", safeDeleteCutoff.Format(time.RFC3339),
 		)
-		deleteQuery := buildMigrationDeleteQuery(tsField, fromTime, cutoffTime)
+		deleteQuery := buildMigrationDeleteQuery(tsField, fromTime, safeDeleteCutoff)
 		deleteBytes, _ := json.Marshal(deleteQuery)
 		if err := m.hot.DeleteByQuery(ctx, index, deleteBytes); err != nil {
 			return fmt.Errorf("deleting migrated documents: %w", err)
@@ -293,9 +326,15 @@ func (m *Migrator) migrateSlice(ctx context.Context, index string, queryBytes []
 		return fmt.Errorf("initiating scroll: %w", err)
 	}
 
+	// Track the active scroll ID so the defer always clears the correct
+	// server-side scroll context, even if a subsequent SlicedScroll call
+	// fails and sets result to nil.
+	activeScrollID := result.ScrollID
 	defer func() {
-		if result != nil && result.ScrollID != "" {
-			if err := m.hot.ClearScroll(ctx, result.ScrollID); err != nil {
+		if activeScrollID != "" {
+			clearCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := m.hot.ClearScroll(clearCtx, activeScrollID); err != nil {
 				slog.Warn("failed to clear scroll", "slice", sliceID, "error", err)
 			}
 		}
@@ -324,6 +363,7 @@ func (m *Migrator) migrateSlice(ctx context.Context, index string, queryBytes []
 		if err != nil {
 			return fmt.Errorf("continuing scroll: %w", err)
 		}
+		activeScrollID = result.ScrollID
 	}
 
 	// Mark this slice as done in checkpoint.
