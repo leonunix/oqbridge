@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,24 @@ import (
 	"github.com/leonunix/oqbridge/internal/backend"
 	"github.com/leonunix/oqbridge/internal/config"
 )
+
+// datePattern matches date suffixes commonly found in time-series index names,
+// e.g. "logs-2026.02.08", "dev-syslog-2026-01-15".
+var datePattern = regexp.MustCompile(`(\d{4})[.\-](\d{2})[.\-](\d{2})$`)
+
+// parseIndexDate extracts the trailing date from an index name.
+// Returns the parsed date and true if a date suffix was found.
+func parseIndexDate(index string) (time.Time, bool) {
+	m := datePattern.FindStringSubmatch(index)
+	if m == nil {
+		return time.Time{}, false
+	}
+	t, err := time.Parse("2006-01-02", m[1]+"-"+m[2]+"-"+m[3])
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
 
 // Progress tracks real-time migration progress.
 type Progress struct {
@@ -88,6 +107,9 @@ func (m *Migrator) MigrateAll(ctx context.Context) error {
 		return nil
 	}
 
+	migrateDays := m.cfg.Migration.MigrateAfterDays
+	cutoffDate := time.Now().UTC().AddDate(0, 0, -migrateDays).Truncate(24 * time.Hour)
+
 	var allErrors []error
 	for _, pattern := range patterns {
 		concrete, err := m.resolvePattern(ctx, pattern)
@@ -97,6 +119,13 @@ func (m *Migrator) MigrateAll(ctx context.Context) error {
 			continue
 		}
 		for _, index := range concrete {
+			// Skip indices whose date suffix is after the cutoff. These indices
+			// contain only recent data and cannot have any documents eligible
+			// for migration, so opening scroll contexts on them is wasteful.
+			if indexDate, ok := parseIndexDate(index); ok && !indexDate.Before(cutoffDate) {
+				slog.Debug("skipping recent index", "index", index, "index_date", indexDate.Format("2006-01-02"), "cutoff", cutoffDate.Format("2006-01-02"))
+				continue
+			}
 			if err := m.MigrateIndex(ctx, index); err != nil {
 				slog.Error("migration failed for index", "index", index, "error", err)
 				allErrors = append(allErrors, fmt.Errorf("migrating %s: %w", index, err))
@@ -378,7 +407,11 @@ func (m *Migrator) migrateSlice(ctx context.Context, index string, queryBytes []
 		return fmt.Errorf("saving checkpoint: %w", saveErr)
 	}
 
-	slog.Info("slice worker completed", "index", index, "slice", sliceID, "migrated", sliceMigrated)
+	if sliceMigrated > 0 {
+		slog.Info("slice worker completed", "index", index, "slice", sliceID, "migrated", sliceMigrated)
+	} else {
+		slog.Debug("slice worker completed with no documents", "index", index, "slice", sliceID)
+	}
 	return nil
 }
 
