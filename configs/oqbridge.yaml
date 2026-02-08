@@ -41,6 +41,8 @@ migration:
   workers: 4                  # Parallel sliced scroll workers
   compress: true              # Gzip compress data sent to Quickwit
   delete_after_migration: false
+  # temp_dir: "/tmp/oqbridge" # Directory for staging migration data on disk (reduces memory usage).
+                              # Leave empty to use in-memory buffers (default).
   # Indices to migrate (required)
   indices:
     - "logs-*"

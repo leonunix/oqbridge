@@ -52,6 +52,10 @@ func main() {
 
 	hot := backend.NewOpenSearch(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)
 	cold := backend.NewQuickwit(cfg.Quickwit.URL, cfg.Quickwit.Username, cfg.Quickwit.Password, cfg.Migration.Compress, qwClient)
+	if cfg.Migration.TempDir != "" {
+		cold.SetTempDir(cfg.Migration.TempDir)
+		slog.Info("migration staging via disk", "temp_dir", cfg.Migration.TempDir)
+	}
 
 	lock := backend.NewOpenSearchLock(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)
 	cpStore := migration.NewOpenSearchCheckpointStore(cfg.OpenSearch.URL, cfg.OpenSearch.Username, cfg.OpenSearch.Password, osClient)

@@ -122,6 +122,31 @@ opensearch:
 	}
 }
 
+func TestLoad_TempDir(t *testing.T) {
+	tmpDir := filepath.Join(t.TempDir(), "staging")
+	content := `
+opensearch:
+  url: "http://os:9200"
+quickwit:
+  url: "http://qw:7280"
+migration:
+  temp_dir: "` + tmpDir + `"
+`
+	path := writeTempFile(t, content)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Migration.TempDir != tmpDir {
+		t.Errorf("Migration.TempDir = %q, want %q", cfg.Migration.TempDir, tmpDir)
+	}
+	// Validation should have created the directory.
+	if _, err := os.Stat(tmpDir); os.IsNotExist(err) {
+		t.Errorf("temp_dir %q was not created during validation", tmpDir)
+	}
+}
+
 func TestTimestampFieldForIndex(t *testing.T) {
 	cfg := &Config{
 		Retention: RetentionConfig{

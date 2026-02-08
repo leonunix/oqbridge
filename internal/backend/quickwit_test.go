@@ -79,6 +79,87 @@ func TestQuickwit_BulkIngest_GzipCompression(t *testing.T) {
 	}
 }
 
+func TestQuickwit_BulkIngest_DiskStaging(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/logs/ingest" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Content-Type") != "application/x-ndjson" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Content-Encoding") != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"unexpected encoding"}`))
+			return
+		}
+
+		b, _ := io.ReadAll(r.Body)
+		want := "{\"a\":1}\n{\"b\":2}\n"
+		if string(b) != want {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"bad body"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	qw := NewQuickwit(srv.URL, "", "", false, nil)
+	qw.SetTempDir(t.TempDir())
+
+	docs := []json.RawMessage{
+		json.RawMessage(`{"_source":{"a":1}}`),
+		json.RawMessage(`{"_source":{"b":2}}`),
+	}
+	if err := qw.BulkIngest(context.Background(), "logs", docs); err != nil {
+		t.Fatalf("BulkIngest via disk: %v", err)
+	}
+}
+
+func TestQuickwit_BulkIngest_DiskStaging_Gzip(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/logs/ingest" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("Content-Encoding") != "gzip" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"missing gzip"}`))
+			return
+		}
+
+		gz, err := gzip.NewReader(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer gz.Close()
+		b, _ := io.ReadAll(gz)
+
+		want := "{\"a\":1}\n{\"b\":2}\n"
+		if string(b) != want {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"error":"bad body"}`))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	qw := NewQuickwit(srv.URL, "", "", true, nil)
+	qw.SetTempDir(t.TempDir())
+
+	docs := []json.RawMessage{
+		json.RawMessage(`{"_source":{"a":1}}`),
+		json.RawMessage(`{"_source":{"b":2}}`),
+	}
+	if err := qw.BulkIngest(context.Background(), "logs", docs); err != nil {
+		t.Fatalf("BulkIngest via disk with gzip: %v", err)
+	}
+}
+
 func TestQuickwit_Search_Non2xxReturnsHTTPStatusError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/search") {

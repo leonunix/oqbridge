@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 )
 
 // Quickwit implements the Backend interface for Quickwit.
@@ -18,7 +20,8 @@ type Quickwit struct {
 	username string
 	password string
 	client   *http.Client
-	compress bool // Enable gzip compression for ingest requests.
+	compress bool   // Enable gzip compression for ingest requests.
+	tempDir  string // When non-empty, stage ingest payloads on disk instead of in memory.
 }
 
 // NewQuickwit creates a new Quickwit backend client.
@@ -34,6 +37,13 @@ func NewQuickwit(baseURL, username, password string, compress bool, httpClient *
 		client:   httpClient,
 		compress: compress,
 	}
+}
+
+// SetTempDir configures a directory for staging ingest payloads on disk.
+// When set, BulkIngest writes NDJSON (and optional gzip) to temporary files
+// instead of in-memory buffers, reducing memory usage for large batches.
+func (q *Quickwit) SetTempDir(dir string) {
+	q.tempDir = dir
 }
 
 func (q *Quickwit) Name() string { return "quickwit" }
@@ -83,6 +93,14 @@ func (q *Quickwit) ClearScroll(_ context.Context, _ string) error {
 }
 
 func (q *Quickwit) BulkIngest(ctx context.Context, index string, docs []json.RawMessage) error {
+	if q.tempDir != "" {
+		return q.bulkIngestViaDisk(ctx, index, docs)
+	}
+	return q.bulkIngestInMemory(ctx, index, docs)
+}
+
+// bulkIngestInMemory stages the NDJSON payload entirely in memory.
+func (q *Quickwit) bulkIngestInMemory(ctx context.Context, index string, docs []json.RawMessage) error {
 	// Build NDJSON body.
 	var raw bytes.Buffer
 	for _, doc := range docs {
@@ -118,6 +136,74 @@ func (q *Quickwit) BulkIngest(ctx context.Context, index string, docs []json.Raw
 		contentEncoding = "gzip"
 	}
 
+	return q.sendIngest(ctx, index, body, contentEncoding)
+}
+
+// bulkIngestViaDisk stages the NDJSON payload to a temporary file on disk,
+// reducing memory usage for large batches.
+func (q *Quickwit) bulkIngestViaDisk(ctx context.Context, index string, docs []json.RawMessage) error {
+	// Write NDJSON to a temp file.
+	ndjsonFile, err := os.CreateTemp(q.tempDir, "oqbridge-ingest-*.ndjson")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	tmpPath := ndjsonFile.Name()
+	defer os.Remove(tmpPath)
+
+	for _, doc := range docs {
+		var docMap map[string]json.RawMessage
+		if err := json.Unmarshal(doc, &docMap); err == nil {
+			if src, ok := docMap["_source"]; ok {
+				if _, err := ndjsonFile.Write(src); err != nil {
+					ndjsonFile.Close()
+					return fmt.Errorf("writing to temp file: %w", err)
+				}
+				if _, err := ndjsonFile.Write([]byte{'\n'}); err != nil {
+					ndjsonFile.Close()
+					return fmt.Errorf("writing newline to temp file: %w", err)
+				}
+				continue
+			}
+		}
+		if _, err := ndjsonFile.Write(doc); err != nil {
+			ndjsonFile.Close()
+			return fmt.Errorf("writing to temp file: %w", err)
+		}
+		if _, err := ndjsonFile.Write([]byte{'\n'}); err != nil {
+			ndjsonFile.Close()
+			return fmt.Errorf("writing newline to temp file: %w", err)
+		}
+	}
+	if err := ndjsonFile.Close(); err != nil {
+		return fmt.Errorf("closing temp file: %w", err)
+	}
+
+	contentEncoding := ""
+	uploadPath := tmpPath
+
+	// Gzip compress the temp file if enabled.
+	if q.compress {
+		gzPath := tmpPath + ".gz"
+		defer os.Remove(gzPath)
+
+		if err := gzipFile(tmpPath, gzPath); err != nil {
+			return fmt.Errorf("gzip compression: %w", err)
+		}
+		uploadPath = gzPath
+		contentEncoding = "gzip"
+	}
+
+	f, err := os.Open(uploadPath)
+	if err != nil {
+		return fmt.Errorf("opening staged file: %w", err)
+	}
+	defer f.Close()
+
+	return q.sendIngest(ctx, index, f, contentEncoding)
+}
+
+// sendIngest sends an ingest request to Quickwit.
+func (q *Quickwit) sendIngest(ctx context.Context, index string, body io.Reader, contentEncoding string) error {
 	url := fmt.Sprintf("%s/api/v1/%s/ingest", q.baseURL, index)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
 	if err != nil {
@@ -144,6 +230,32 @@ func (q *Quickwit) BulkIngest(ctx context.Context, index string, docs []json.Raw
 		}
 	}
 	return nil
+}
+
+// gzipFile compresses src to dst using gzip.
+func gzipFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(filepath.Clean(dst))
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	gz, err := gzip.NewWriterLevel(out, gzip.BestSpeed)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(gz, in); err != nil {
+		gz.Close()
+		return err
+	}
+	return gz.Close()
 }
 
 func (q *Quickwit) setAuth(req *http.Request) {
