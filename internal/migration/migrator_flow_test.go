@@ -376,3 +376,59 @@ func TestMigrator_MigrateAll_WildcardResolution(t *testing.T) {
 	}
 	cold.mu.Unlock()
 }
+
+func TestMigrator_MigrateAll_SkipsRecentIndices(t *testing.T) {
+	dir := t.TempDir()
+
+	// Simulate two resolved indices: one old (should be migrated), one recent (should be skipped).
+	today := time.Now().UTC().Format("2006.01.02")
+	oldDate := time.Now().UTC().AddDate(0, 0, -60).Format("2006.01.02")
+	oldIndex := "logs-" + oldDate
+	recentIndex := "logs-" + today
+
+	hot := newFakeHot(map[int][][]json.RawMessage{
+		0: {makeHits(0, 1), nil},
+		1: {makeHits(1, 1), nil},
+	})
+	hot.resolvedIndices = map[string][]string{
+		"logs-*": {oldIndex, recentIndex},
+	}
+	cold := newFakeCold()
+
+	cfg := &config.Config{
+		Retention: config.RetentionConfig{Days: 30, TimestampField: "@timestamp"},
+		Migration: config.MigrationConfig{
+			MigrateAfterDays: 25,
+			Schedule:         "* * * * *",
+			BatchSize:        2,
+			Workers:          2,
+			Indices:          []string{"logs-*"},
+		},
+	}
+	cpStore, err := NewLocalCheckpointStore(dir)
+	if err != nil {
+		t.Fatalf("NewLocalCheckpointStore: %v", err)
+	}
+	m, err := NewMigrator(cfg, hot, cold, cpStore)
+	if err != nil {
+		t.Fatalf("NewMigrator: %v", err)
+	}
+	m.progressInterval = time.Millisecond
+
+	if err := m.MigrateAll(context.Background()); err != nil {
+		t.Fatalf("MigrateAll: %v", err)
+	}
+
+	cold.mu.Lock()
+	defer cold.mu.Unlock()
+
+	// Old index should have docs migrated.
+	if docs, ok := cold.docsByIndex[oldIndex]; !ok || len(docs) == 0 {
+		t.Fatalf("expected docs under %q, got %v", oldIndex, cold.docsByIndex)
+	}
+
+	// Recent index should NOT have any docs (it should have been skipped entirely).
+	if docs, ok := cold.docsByIndex[recentIndex]; ok && len(docs) > 0 {
+		t.Fatalf("recent index %q should have been skipped, but got %d docs", recentIndex, len(docs))
+	}
+}

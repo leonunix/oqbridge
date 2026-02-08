@@ -65,6 +65,33 @@ func TestBuildMigrationDeleteQuery_IncrementalRun(t *testing.T) {
 	}
 }
 
+func TestParseIndexDate(t *testing.T) {
+	tests := []struct {
+		index string
+		want  string
+		ok    bool
+	}{
+		{"dev-c3j1-syslog-2026.02.08", "2026-02-08", true},
+		{"logs-2025-01-01", "2025-01-01", true},
+		{"logs-2025.01.01", "2025-01-01", true},
+		{"myindex-2024.12.31", "2024-12-31", true},
+		{"logs", "", false},
+		{"logs-v2", "", false},
+		{"", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.index, func(t *testing.T) {
+			got, ok := parseIndexDate(tc.index)
+			if ok != tc.ok {
+				t.Fatalf("parseIndexDate(%q) ok=%v, want %v", tc.index, ok, tc.ok)
+			}
+			if ok && got.Format("2006-01-02") != tc.want {
+				t.Fatalf("parseIndexDate(%q) = %s, want %s", tc.index, got.Format("2006-01-02"), tc.want)
+			}
+		})
+	}
+}
+
 func extractRangeField(t *testing.T, q map[string]interface{}, field string) map[string]interface{} {
 	t.Helper()
 	queryAny, ok := q["query"].(map[string]interface{})
