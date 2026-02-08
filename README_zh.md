@@ -123,6 +123,7 @@ cp configs/oqbridge.yaml oqbridge.yaml
 | `migration.workers` | `4` | 并行 sliced scroll worker 数 |
 | `migration.compress` | `true` | 启用 Gzip 压缩传输 |
 | `migration.delete_after_migration` | `false` | 迁移后删除 OpenSearch 中的数据 |
+| `migration.temp_dir` | — | 迁移时数据暂存目录。为空（默认）时使用内存缓冲。适用于 `batch_size` 较大时降低内存占用 |
 | `migration.indices` | — | 需要迁移的索引模式（支持通配符：`*`、`logs-*`） |
 
 ## 数据生命周期

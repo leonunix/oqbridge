@@ -123,6 +123,7 @@ See [configs/oqbridge.yaml](configs/oqbridge.yaml) for the full configuration re
 | `migration.workers` | `4` | Parallel sliced scroll workers |
 | `migration.compress` | `true` | Gzip compress data to Quickwit |
 | `migration.delete_after_migration` | `false` | Delete data from OpenSearch after migration |
+| `migration.temp_dir` | — | Directory for staging data on disk during migration. When empty (default), data is buffered in memory. Useful for reducing memory usage with very large `batch_size` |
 | `migration.indices` | — | Index patterns to migrate (supports wildcards: `*`, `logs-*`) |
 
 ## Data Lifecycle
