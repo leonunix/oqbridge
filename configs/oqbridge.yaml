@@ -31,6 +31,10 @@ retention:
   # index_fields:
   #   my-index: "created_at"
   #   another-index: "event_time"
+  # Per-index cold retention overrides (days). Supports exact names or glob patterns.
+  # index_cold_days:
+  #   security-audit-*: 1095       # 3 years for security audit logs
+  #   compliance-*: 2555           # 7 years for compliance logs
 
 # Migration settings (used by oqbridge-migrate only, ignored by the proxy)
 migration:

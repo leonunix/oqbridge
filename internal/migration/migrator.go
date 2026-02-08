@@ -491,7 +491,7 @@ func (m *Migrator) ensureQuickwitIndex(ctx context.Context, index, tsField strin
 		slog.Info("quickwit index already exists", "index", index)
 		return nil
 	}
-	coldDays := m.cfg.Retention.ColdDays
+	coldDays := m.cfg.ColdDaysForIndex(index)
 	slog.Info("creating quickwit index", "index", index, "timestamp_field", tsField, "retention_days", coldDays)
 	if err := m.cold.CreateIndex(ctx, index, tsField, coldDays); err != nil {
 		return fmt.Errorf("creating index: %w", err)

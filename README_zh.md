@@ -112,6 +112,7 @@ cp configs/oqbridge.yaml oqbridge.yaml
 | `retention.cold_days` | `365` | Quickwit 冷数据保留天数（0 = 永不删除） |
 | `retention.timestamp_field` | `@timestamp` | 默认时间戳字段 |
 | `retention.index_fields` | — | 每索引时间戳字段覆盖 |
+| `retention.index_cold_days` | — | 每索引冷数据保留天数覆盖。支持精确名称或通配符（如 `security-audit-*: 1095`） |
 
 ### 迁移配置
 
