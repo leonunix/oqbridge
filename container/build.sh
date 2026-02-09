@@ -7,6 +7,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 IMAGE="oqbridge"
 TAG="latest"
 PUSH=false
+VERSION="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && git describe --tags --always --dirty 2>/dev/null || echo "dev")"
 PLATFORM="linux/amd64"
 
 # Auto-detect container runtime: prefer docker, fall back to podman
@@ -66,11 +67,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 FULL_IMAGE="${IMAGE}:${TAG}"
-echo "Building ${FULL_IMAGE} using ${RUNTIME} ..."
+VERSION_IMAGE="${IMAGE}:${VERSION}"
+echo "Building ${FULL_IMAGE} + ${VERSION_IMAGE} using ${RUNTIME} ..."
 
 BUILD_ARGS=(
     -f "${SCRIPT_DIR}/Dockerfile"
     -t "${FULL_IMAGE}"
+    -t "${VERSION_IMAGE}"
 )
 
 if [[ -n "${PLATFORM}" ]]; then
