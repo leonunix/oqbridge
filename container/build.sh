@@ -7,7 +7,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 IMAGE="oqbridge"
 TAG="latest"
 PUSH=false
-PLATFORM=""
+PLATFORM="linux/amd64"
 
 # Auto-detect container runtime: prefer docker, fall back to podman
 if command -v docker &>/dev/null; then
