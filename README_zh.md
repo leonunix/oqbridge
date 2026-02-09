@@ -22,11 +22,11 @@ OpenSearch 节点                          远端
 │  OpenSearch (localhost)   │     │   Quickwit   │
 │          ↑                │     │      ↑       │
 │  oqbridge-migrate ────────┼─gzip┼──────┘       │
-│  (并行 sliced scroll)     │     │              │
+│  (并行 sliced scroll)      │     │              │
 └───────────────────────────┘     └──────────────┘
 
 客户端 ──► oqbridge (代理) ──┬──► OpenSearch  (热数据, <30天)
-                             └──► Quickwit    (冷数据, ≥30天, 365天后自动删除)
+                           └──► Quickwit    (冷数据, ≥30天, 365天后自动删除)
 ```
 
 - **`oqbridge`** — 查询代理。可部署在任意节点。根据时间范围将搜索请求路由到正确的后端，透明合并结果。
@@ -54,6 +54,7 @@ OpenSearch 节点                          远端
 - **断点续传** — 中断的迁移自动从上次完成的 slice 恢复。
 - **多实例安全** — 通过 OpenSearch 实现分布式锁，防止多个 `oqbridge-migrate` 实例同时迁移同一索引。Checkpoint 和 watermark 存储在 OpenSearch 中，所有实例共享迁移进度。
 - **实时进度** — 每 10 秒输出 docs/sec、已迁移数量和耗时。
+- **迁移指标** — 每次迁移运行后自动将统计数据（迁移文档数、耗时、吞吐量、状态）记录到 `.oqbridge-migration-metrics` OpenSearch 索引中。可在 OpenSearch Dashboards 中构建仪表盘监控迁移趋势。
 - **两种运行模式** — 单次执行 (`--once`) 适配 crontab，或内置 cron 守护模式。
 
 ## 快速开始
@@ -223,6 +224,35 @@ oqbridge 会将所有非搜索请求原样转发到 OpenSearch。对于搜索拦
 ```
 
 无需额外的协调服务（etcd、Consul 等）—— 直接复用 OpenSearch 本身作为协调后端。
+
+### 迁移指标
+
+每次迁移运行（无论成功或失败）都会自动将指标文档记录到 `.oqbridge-migration-metrics` OpenSearch 索引中。无需额外配置即可通过 OpenSearch Dashboards 监控迁移状态。
+
+**记录的字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `@timestamp` | date | 完成时间（在仪表盘中用作时间过滤字段） |
+| `index` | keyword | 被迁移的索引名 |
+| `documents_migrated` | long | 迁移的文档数 |
+| `duration_sec` | float | 迁移耗时（秒） |
+| `docs_per_sec` | float | 吞吐量 |
+| `status` | keyword | `success` 或 `failed` |
+| `error` | text | 错误信息（仅失败时有值） |
+| `workers` | integer | 使用的并行 worker 数 |
+| `batch_size` | integer | 使用的 scroll 批量大小 |
+| `cutoff_time` | date | 本次迁移使用的冷热分界时间 |
+
+**配置仪表盘：**
+
+1. 打开 OpenSearch Dashboards。
+2. 进入 **Stack Management → Index Patterns**，为 `.oqbridge-migration-metrics` 创建索引模式，时间字段选 `@timestamp`。
+3. 创建可视化图表，例如：
+   - **柱状图**：按天聚合 `documents_migrated`，查看每日迁移量。
+   - **折线图**：`docs_per_sec` 随时间变化，追踪吞吐量趋势。
+   - **饼图**：`status` 词项聚合，查看成功/失败比例。
+   - **数据表**：按 `@timestamp` 排序查看最近的迁移记录。
 
 ## 许可证
 

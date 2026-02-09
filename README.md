@@ -54,6 +54,7 @@ Client ──► oqbridge (proxy) ──┬──► OpenSearch  (hot, <30d)
 - **Checkpoint/resume** — Interrupted migrations automatically resume from the last completed slice.
 - **Multi-instance safe** — Distributed locking (via OpenSearch) prevents multiple `oqbridge-migrate` instances from migrating the same index concurrently. Checkpoints and watermarks are stored in OpenSearch so all instances share migration progress.
 - **Real-time progress** — Logs docs/sec, total migrated, and elapsed time every 10 seconds.
+- **Migration metrics** — Each migration run records statistics (documents migrated, duration, throughput, status) to the `.oqbridge-migration-metrics` OpenSearch index. Build dashboards in OpenSearch Dashboards to monitor migration trends.
 - **Two run modes** — One-shot (`--once`) for crontab, or built-in cron daemon mode.
 
 ## Quick Start
@@ -225,6 +226,35 @@ Instance B: acquire lock → read watermark T1 → migrate [T1, T2) → save wat
 ```
 
 No external coordination service (etcd, Consul, etc.) is required — OpenSearch itself is used as the coordination backend.
+
+### Migration Metrics
+
+Every migration run (success or failure) automatically records a metric document to the `.oqbridge-migration-metrics` OpenSearch index. This enables monitoring migration health via OpenSearch Dashboards without any additional configuration.
+
+**Recorded fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `@timestamp` | date | Completion time (use as the time filter in dashboards) |
+| `index` | keyword | Index name that was migrated |
+| `documents_migrated` | long | Number of documents transferred |
+| `duration_sec` | float | Migration duration in seconds |
+| `docs_per_sec` | float | Throughput |
+| `status` | keyword | `success` or `failed` |
+| `error` | text | Error message (only for failed runs) |
+| `workers` | integer | Number of parallel workers used |
+| `batch_size` | integer | Scroll batch size used |
+| `cutoff_time` | date | Hot/cold boundary used for this run |
+
+**Setting up a dashboard:**
+
+1. Open OpenSearch Dashboards.
+2. Go to **Stack Management → Index Patterns** and create a pattern for `.oqbridge-migration-metrics` with `@timestamp` as the time field.
+3. Build visualizations — for example:
+   - **Bar chart**: `documents_migrated` aggregated by day to see daily migration volume.
+   - **Line chart**: `docs_per_sec` over time to track throughput trends.
+   - **Pie chart**: `status` terms to see success/failure ratio.
+   - **Data table**: Recent migration runs sorted by `@timestamp`.
 
 ## License
 
