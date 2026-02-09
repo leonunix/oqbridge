@@ -47,7 +47,8 @@ type Migrator struct {
 	hot              HotClient
 	cold             ColdClient
 	checkpoint       CheckpointStore
-	lock             DistLock // optional distributed lock to prevent multi-instance duplication
+	lock             DistLock        // optional distributed lock to prevent multi-instance duplication
+	metrics          MetricsRecorder // optional metrics recorder for migration stats
 	lockTTL          time.Duration
 	progressInterval time.Duration
 	running          sync.Mutex // prevents overlapping MigrateAll runs from cron
@@ -61,6 +62,13 @@ type MigratorOption func(*Migrator)
 func WithDistLock(lock DistLock) MigratorOption {
 	return func(m *Migrator) {
 		m.lock = lock
+	}
+}
+
+// WithMetricsRecorder enables recording of migration metrics to an external store.
+func WithMetricsRecorder(mr MetricsRecorder) MigratorOption {
+	return func(m *Migrator) {
+		m.metrics = mr
 	}
 }
 
@@ -296,7 +304,9 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 	if len(errs) > 0 {
 		// Save checkpoint for resume.
 		m.checkpoint.Save(cp)
-		return fmt.Errorf("migration had %d slice errors, first: %w", len(errs), errs[0])
+		sliceErr := fmt.Errorf("migration had %d slice errors, first: %w", len(errs), errs[0])
+		m.recordMetric(index, progress, cutoffTime, sliceErr)
+		return sliceErr
 	}
 
 	totalMigrated := progress.Migrated.Load()
@@ -336,7 +346,27 @@ func (m *Migrator) MigrateIndex(ctx context.Context, index string) error {
 		"elapsed", elapsed.Round(time.Second).String(),
 		"docs_per_sec", float64(totalMigrated)/elapsed.Seconds(),
 	)
+	m.recordMetric(index, progress, cutoffTime, nil)
 	return nil
+}
+
+// recordMetric records a migration metric if a MetricsRecorder is configured.
+// It uses a detached context to avoid being cancelled by parent shutdown.
+func (m *Migrator) recordMetric(index string, progress *Progress, cutoff time.Time, migErr error) {
+	if m.metrics == nil {
+		return
+	}
+	var metric *MigrationMetric
+	if migErr == nil {
+		metric = NewSuccessMetric(index, progress.StartTime, progress.Migrated.Load(), cutoff, m.cfg.Migration.Workers, m.cfg.Migration.BatchSize)
+	} else {
+		metric = NewFailureMetric(index, progress.StartTime, progress.Migrated.Load(), cutoff, m.cfg.Migration.Workers, m.cfg.Migration.BatchSize, migErr)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := m.metrics.Record(ctx, metric); err != nil {
+		slog.Warn("failed to record migration metric", "index", index, "error", err)
+	}
 }
 
 // migrateSlice processes a single sliced scroll partition.
