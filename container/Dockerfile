@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/oqbridge ./cmd/oqbridge && \
 FROM alpine:3
 
 RUN apk add --no-cache ca-certificates tzdata && \
-    adduser -D -u 65534 oqbridge && \
+    adduser -D -u 10001 oqbridge && \
     mkdir -p /var/lib/oqbridge && \
     chown oqbridge:oqbridge /var/lib/oqbridge
 
