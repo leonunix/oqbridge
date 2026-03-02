@@ -96,10 +96,11 @@ func TestOpenSearch_SearchAs_AuthHeaderVsServiceAccount(t *testing.T) {
 	os := NewOpenSearch(srv.URL, "svc", "pw", nil)
 	body := []byte(`{"query":{"match_all":{}}}`)
 
-	if _, err := os.SearchAs(context.Background(), "idx", body, token); err != nil {
+	hdr := http.Header{"Authorization": {token}}
+	if _, err := os.SearchAs(context.Background(), "idx", body, hdr); err != nil {
 		t.Fatalf("SearchAs with auth header: %v", err)
 	}
-	if _, err := os.SearchAs(context.Background(), "idx", body, ""); err != nil {
+	if _, err := os.SearchAs(context.Background(), "idx", body, nil); err != nil {
 		t.Fatalf("SearchAs with service account: %v", err)
 	}
 }
@@ -116,7 +117,7 @@ func TestOpenSearch_SearchAs_Non2xxReturnsHTTPStatusError(t *testing.T) {
 	defer srv.Close()
 
 	os := NewOpenSearch(srv.URL, "", "", nil)
-	_, err := os.SearchAs(context.Background(), "idx", []byte(`{}`), "Basic whatever")
+	_, err := os.SearchAs(context.Background(), "idx", []byte(`{}`), http.Header{"Authorization": {"Basic whatever"}})
 	if err == nil {
 		t.Fatalf("expected error")
 	}

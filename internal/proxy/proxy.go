@@ -195,8 +195,7 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, indices []s
 		// Fan-out: We query both backends in parallel and merge results.
 		// Security: If OpenSearch indicates auth failure (401/403) or we cannot
 		// validate auth due to backend errors, we must not return cold data.
-		authHeader := r.Header.Get("Authorization")
-		p.handleFanoutSearch(w, r.Context(), strings.Join(indices, ","), r.URL.Path, r.URL.RawQuery, fanout.Body, fanout.Merge, authHeader)
+		p.handleFanoutSearch(w, r.Context(), strings.Join(indices, ","), r.URL.Path, r.URL.RawQuery, fanout.Body, fanout.Merge, r.Header)
 		return
 	}
 }
@@ -210,7 +209,8 @@ func (p *Proxy) authenticateViaOpenSearch(ctx context.Context, authHeader string
 	return p.hotBackend.Authenticate(ctx, authHeader)
 }
 
-func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, index string, path string, rawQuery string, body []byte, merge MergeOptions, authHeader string) {
+func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, index string, path string, rawQuery string, body []byte, merge MergeOptions, incomingHeader http.Header) {
+	authHeader := incomingHeader.Get("Authorization")
 	if authHeader == "" {
 		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
 		return
@@ -227,7 +227,7 @@ func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, i
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		hotResp, hotErr = p.hotBackend.SearchRaw(ctx, path, rawQuery, body, authHeader)
+		hotResp, hotErr = p.hotBackend.SearchRaw(ctx, path, rawQuery, body, incomingHeader)
 	}()
 	go func() {
 		defer wg.Done()
@@ -531,7 +531,7 @@ func (p *Proxy) handleMSearch(w http.ResponseWriter, r *http.Request, defaultInd
 
 		switch target {
 		case RouteHotOnly:
-			resp, err := p.hotBackend.SearchAs(r.Context(), strings.Join(e.Indices, ","), e.Body, authHeader)
+			resp, err := p.hotBackend.SearchAs(r.Context(), strings.Join(e.Indices, ","), e.Body, r.Header)
 			if err != nil {
 				status := 502
 				if isAuthError(err) {
@@ -558,7 +558,7 @@ func (p *Proxy) handleMSearch(w http.ResponseWriter, r *http.Request, defaultInd
 			b, _ := json.Marshal(resp)
 			out = append(out, b)
 		case RouteBoth:
-			hotResp, hotErr := p.hotBackend.SearchAs(r.Context(), strings.Join(e.Indices, ","), fanout.Body, authHeader)
+			hotResp, hotErr := p.hotBackend.SearchAs(r.Context(), strings.Join(e.Indices, ","), fanout.Body, r.Header)
 			coldResp, coldErr := p.searchColdIndices(r.Context(), e.Indices, fanout.Body)
 			if hotErr != nil && coldErr != nil {
 				out = append(out, json.RawMessage(fmt.Sprintf(`{"error":{"reason":%q},"status":502}`, "both backends failed")))

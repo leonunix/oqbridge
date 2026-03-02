@@ -66,12 +66,14 @@ func (o *OpenSearch) Authenticate(ctx context.Context, authHeader string) error 
 }
 
 func (o *OpenSearch) Search(ctx context.Context, index string, body []byte) (*SearchResponse, error) {
-	return o.SearchAs(ctx, index, body, "")
+	return o.SearchAs(ctx, index, body, nil)
 }
 
 // SearchRaw executes a search request against an explicit path and query string.
 // path is expected to be something like "/{index}/_search" or "/_search".
-func (o *OpenSearch) SearchRaw(ctx context.Context, path string, rawQuery string, body []byte, authHeader string) (*SearchResponse, error) {
+// If incomingHeader is non-nil, all headers from it are forwarded to the backend
+// (except hop-by-hop and content headers). Otherwise the service account is used.
+func (o *OpenSearch) SearchRaw(ctx context.Context, path string, rawQuery string, body []byte, incomingHeader http.Header) (*SearchResponse, error) {
 	u := o.baseURL + path
 	if rawQuery != "" {
 		u += "?" + rawQuery
@@ -81,8 +83,8 @@ func (o *OpenSearch) SearchRaw(ctx context.Context, path string, rawQuery string
 		return nil, fmt.Errorf("creating search request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if authHeader != "" {
-		req.Header.Set("Authorization", authHeader)
+	if incomingHeader != nil {
+		copyIncomingHeaders(req.Header, incomingHeader)
 	} else {
 		o.setAuth(req)
 	}
@@ -109,17 +111,17 @@ func (o *OpenSearch) SearchRaw(ctx context.Context, path string, rawQuery string
 	return &result, nil
 }
 
-// SearchAs executes a search using the given auth header instead of the
-// configured service account. If authHeader is empty, falls back to service account.
-func (o *OpenSearch) SearchAs(ctx context.Context, index string, body []byte, authHeader string) (*SearchResponse, error) {
+// SearchAs executes a search forwarding the given incoming headers to the backend.
+// If incomingHeader is nil, falls back to service account credentials.
+func (o *OpenSearch) SearchAs(ctx context.Context, index string, body []byte, incomingHeader http.Header) (*SearchResponse, error) {
 	url := fmt.Sprintf("%s/%s/_search", o.baseURL, index)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("creating search request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if authHeader != "" {
-		req.Header.Set("Authorization", authHeader)
+	if incomingHeader != nil {
+		copyIncomingHeaders(req.Header, incomingHeader)
 	} else {
 		o.setAuth(req)
 	}
@@ -149,6 +151,22 @@ func (o *OpenSearch) SearchAs(ctx context.Context, index string, body []byte, au
 		return nil, fmt.Errorf("decoding search response: %w", err)
 	}
 	return &result, nil
+}
+
+// copyIncomingHeaders copies all headers from src to dst, skipping hop-by-hop
+// and content-related headers that should not be forwarded by a proxy.
+func copyIncomingHeaders(dst, src http.Header) {
+	for k, vv := range src {
+		switch http.CanonicalHeaderKey(k) {
+		case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
+			"Te", "Trailers", "Transfer-Encoding", "Upgrade",
+			"Content-Length", "Content-Type", "Host":
+			continue
+		}
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
 }
 
 // SlicedScrollConfig configures a sliced scroll request for parallel reads.
