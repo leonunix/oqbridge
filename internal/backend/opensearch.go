@@ -36,16 +36,17 @@ func NewOpenSearch(baseURL, username, password string, httpClient *http.Client) 
 
 func (o *OpenSearch) Name() string { return "opensearch" }
 
-// Authenticate validates the given credentials against OpenSearch's _security/authinfo
-// or by performing a lightweight request. Returns nil if auth succeeds, error otherwise.
-func (o *OpenSearch) Authenticate(ctx context.Context, authHeader string) error {
+// Authenticate validates the given credentials against OpenSearch's _security/authinfo.
+// All incoming headers (Authorization, x-proxy-user, etc.) are forwarded so that both
+// basic auth and proxy auth modes work. Returns nil if auth succeeds, error otherwise.
+func (o *OpenSearch) Authenticate(ctx context.Context, incomingHeader http.Header) error {
 	endpoint := o.baseURL + "/_plugins/_security/authinfo"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return fmt.Errorf("creating auth request: %w", err)
 	}
-	if authHeader != "" {
-		req.Header.Set("Authorization", authHeader)
+	if incomingHeader != nil {
+		copyIncomingHeaders(req.Header, incomingHeader)
 	}
 
 	resp, err := o.client.Do(req)

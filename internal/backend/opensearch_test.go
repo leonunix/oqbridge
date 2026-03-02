@@ -35,11 +35,11 @@ func TestOpenSearch_Authenticate_StatusCodes(t *testing.T) {
 
 	os := NewOpenSearch(srv.URL, "", "", nil)
 
-	if err := os.Authenticate(context.Background(), token); err != nil {
+	if err := os.Authenticate(context.Background(), http.Header{"Authorization": {token}}); err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
 
-	if err := os.Authenticate(context.Background(), "bad"); err == nil {
+	if err := os.Authenticate(context.Background(), http.Header{"Authorization": {"bad"}}); err == nil {
 		t.Fatalf("expected error for unauthorized")
 	} else {
 		var httpErr *HTTPStatusError
@@ -52,7 +52,7 @@ func TestOpenSearch_Authenticate_StatusCodes(t *testing.T) {
 		}
 	}
 
-	if err := os.Authenticate(context.Background(), "force-500"); err == nil {
+	if err := os.Authenticate(context.Background(), http.Header{"Authorization": {"force-500"}}); err == nil {
 		t.Fatalf("expected error for 500")
 	} else {
 		var httpErr *HTTPStatusError

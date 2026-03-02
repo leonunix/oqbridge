@@ -134,10 +134,9 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, indices []s
 	case RouteColdOnly:
 		// Single non-wildcard index: passthrough to Quickwit (no merge needed).
 		if len(indices) == 1 && !hasWildcard(indices) {
-			authHeader := r.Header.Get("Authorization")
-			if err := p.authenticateViaOpenSearch(r.Context(), authHeader); err != nil {
+			if err := p.authenticateViaOpenSearch(r.Context(), r.Header); err != nil {
 				status := http.StatusBadGateway
-				if authHeader == "" || isAuthError(err) {
+				if isAuthError(err) {
 					status = statusFromAuthError(err)
 				}
 				slog.Warn("auth failed for cold-only query", "indices", strings.Join(indices, ","), "status", status, "error", err)
@@ -164,10 +163,9 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, indices []s
 
 		// Must validate user auth against OpenSearch first, because Quickwit
 		// has no knowledge of OpenSearch users.
-		authHeader := r.Header.Get("Authorization")
-		if err := p.authenticateViaOpenSearch(r.Context(), authHeader); err != nil {
+		if err := p.authenticateViaOpenSearch(r.Context(), r.Header); err != nil {
 			status := http.StatusBadGateway
-			if authHeader == "" || isAuthError(err) {
+			if isAuthError(err) {
 				status = statusFromAuthError(err)
 			}
 			slog.Warn("auth failed for cold-only query", "indices", strings.Join(indices, ","), "status", status, "error", err)
@@ -204,22 +202,13 @@ func (p *Proxy) handleSearch(w http.ResponseWriter, r *http.Request, indices []s
 }
 
 // authenticateViaOpenSearch validates the client's credentials by making a
-// lightweight call to OpenSearch's security plugin.
-func (p *Proxy) authenticateViaOpenSearch(ctx context.Context, authHeader string) error {
-	if authHeader == "" {
-		return fmt.Errorf("no authorization header")
-	}
-	return p.hotBackend.Authenticate(ctx, authHeader)
+// lightweight call to OpenSearch's security plugin. Forwards all incoming
+// headers so both basic auth and proxy auth modes work.
+func (p *Proxy) authenticateViaOpenSearch(ctx context.Context, incomingHeader http.Header) error {
+	return p.hotBackend.Authenticate(ctx, incomingHeader)
 }
 
 func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, index string, path string, rawQuery string, body []byte, merge MergeOptions, incomingHeader http.Header) {
-	authHeader := incomingHeader.Get("Authorization")
-	if authHeader == "" {
-		slog.Warn("fan-out search rejected: no Authorization header", "index", index, "path", path)
-		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
-		return
-	}
-
 	var (
 		hotResp  *backend.SearchResponse
 		coldResp *backend.SearchResponse
@@ -256,7 +245,7 @@ func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, i
 	// If OpenSearch failed for non-auth reasons, validate auth explicitly before
 	// returning any cold data.
 	if hotErr != nil {
-		if err := p.authenticateViaOpenSearch(ctx, authHeader); err != nil {
+		if err := p.authenticateViaOpenSearch(ctx, incomingHeader); err != nil {
 			status := http.StatusBadGateway
 			if isAuthError(err) {
 				status = statusFromAuthError(err)
@@ -496,7 +485,6 @@ func (p *Proxy) handleMSearch(w http.ResponseWriter, r *http.Request, defaultInd
 		}
 	}
 
-	authHeader := r.Header.Get("Authorization")
 	needsCold := false
 	for _, e := range entries {
 		if p.routeForIndices(e.Body, e.Indices) != RouteHotOnly {
@@ -505,11 +493,7 @@ func (p *Proxy) handleMSearch(w http.ResponseWriter, r *http.Request, defaultInd
 		}
 	}
 	if needsCold {
-		if authHeader == "" {
-			http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
-			return
-		}
-		if err := p.authenticateViaOpenSearch(r.Context(), authHeader); err != nil {
+		if err := p.authenticateViaOpenSearch(r.Context(), r.Header); err != nil {
 			status := http.StatusBadGateway
 			if isAuthError(err) {
 				status = statusFromAuthError(err)
