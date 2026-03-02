@@ -77,6 +77,9 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	kind, indices := parseEndpoint(r.URL.Path)
+
+	slog.Debug("incoming request", "method", r.Method, "path", r.URL.Path, "endpoint", kind, "indices", indices)
+
 	switch kind {
 	case endpointSearch:
 		// Root /_search: passthrough (no reliable index list for Quickwit fan-out).
@@ -212,6 +215,7 @@ func (p *Proxy) authenticateViaOpenSearch(ctx context.Context, authHeader string
 func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, index string, path string, rawQuery string, body []byte, merge MergeOptions, incomingHeader http.Header) {
 	authHeader := incomingHeader.Get("Authorization")
 	if authHeader == "" {
+		slog.Warn("fan-out search rejected: no Authorization header", "index", index, "path", path)
 		http.Error(w, `{"error":"authentication required"}`, http.StatusUnauthorized)
 		return
 	}
@@ -244,6 +248,7 @@ func (p *Proxy) handleFanoutSearch(w http.ResponseWriter, ctx context.Context, i
 
 	// If OpenSearch reports auth failure, do NOT return cold data.
 	if isAuthError(hotErr) {
+		slog.Warn("fan-out search auth failure from OpenSearch", "index", index, "status", statusFromAuthError(hotErr), "error", hotErr)
 		http.Error(w, `{"error":"authentication failed"}`, statusFromAuthError(hotErr))
 		return
 	}

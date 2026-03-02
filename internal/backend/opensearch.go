@@ -160,7 +160,8 @@ func copyIncomingHeaders(dst, src http.Header) {
 		switch http.CanonicalHeaderKey(k) {
 		case "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
 			"Te", "Trailers", "Transfer-Encoding", "Upgrade",
-			"Content-Length", "Content-Type", "Host":
+			"Content-Length", "Content-Type", "Host",
+			"Accept-Encoding":
 			continue
 		}
 		for _, v := range vv {
