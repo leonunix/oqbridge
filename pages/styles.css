@@ -79,6 +79,12 @@ code {
   padding: 26px 0 14px;
 }
 
+.header-tools {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -119,6 +125,43 @@ code {
   color: var(--text);
 }
 
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(9, 24, 38, 0.65);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+}
+
+.lang-button {
+  min-width: 48px;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition:
+    color 180ms ease,
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.lang-button:hover,
+.lang-button:focus-visible {
+  color: var(--text);
+  transform: translateY(-1px);
+}
+
+.lang-button.is-active {
+  color: #07131f;
+  background: linear-gradient(135deg, var(--accent) 0%, #d7fff2 100%);
+}
+
 .section {
   padding: 52px 0;
 }
@@ -149,7 +192,7 @@ code {
 }
 
 .hero h1 {
-  font-family: "ZCOOL XiaoWei", serif;
+  font-family: "Fraunces", "Noto Sans SC", serif;
   font-size: clamp(2.8rem, 6vw, 5.8rem);
 }
 
@@ -666,6 +709,12 @@ code {
     flex-direction: column;
     align-items: flex-start;
     gap: 18px;
+  }
+
+  .header-tools {
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .site-nav {
