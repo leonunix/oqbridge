@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>oqbridge | OpenSearch 与 Quickwit 的冷热分层桥</title>
+  <meta
+    name="description"
+    content="oqbridge 是一个轻量级代理，用于在 OpenSearch 与 Quickwit 之间实现自动冷热数据分层、透明查询路由与冷数据迁移。"
+  >
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&amp;family=Noto+Sans+SC:wght@400;500;700;800&amp;family=ZCOOL+XiaoWei&amp;display=swap"
+    rel="stylesheet"
+  >
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <div class="page-noise" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="oqbridge 首页">
+        <span class="brand-mark">oq</span>
+        <span class="brand-text">bridge</span>
+      </a>
+
+      <nav class="site-nav" aria-label="主导航">
+        <a href="#overview">项目概览</a>
+        <a href="#architecture">架构</a>
+        <a href="#features">能力</a>
+        <a href="#lifecycle">生命周期</a>
+        <a href="#start">快速开始</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero section reveal">
+        <div class="hero-copy">
+          <p class="eyebrow">OpenSearch + Quickwit / Hot-Cold Tiering Proxy</p>
+          <h1>让热数据留在 <span>OpenSearch</span>，让冷数据安静地去 <span>Quickwit</span>。</h1>
+          <p class="hero-text">
+            oqbridge 是一个面向日志与时序检索场景的轻量级桥接层。
+            它把用户查询入口保持在 OpenSearch 兼容接口之上，同时把历史数据自动迁移到 Quickwit，
+            以更低的存储成本承接更长周期的数据保留需求。
+          </p>
+
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/leonunix/oqbridge" target="_blank" rel="noreferrer">查看仓库</a>
+            <a class="button button-secondary" href="https://github.com/leonunix/oqbridge/blob/main/README_zh.md" target="_blank" rel="noreferrer">中文文档</a>
+          </div>
+
+          <ul class="hero-points">
+            <li>统一查询入口，不强迫业务理解双引擎差异</li>
+            <li>自动冷热分层，降低长期日志保留成本</li>
+            <li>迁移与代理解耦，适合渐进式接入生产环境</li>
+          </ul>
+        </div>
+
+        <div class="hero-panel">
+          <div class="status-card">
+            <div class="status-head">
+              <span class="status-label">核心定位</span>
+              <span class="status-chip">lightweight</span>
+            </div>
+            <div class="signal-grid">
+              <div>
+                <strong>2</strong>
+                <span>独立二进制</span>
+              </div>
+              <div>
+                <strong>30d</strong>
+                <span>默认热数据窗口</span>
+              </div>
+              <div>
+                <strong>365d</strong>
+                <span>默认冷数据保留</span>
+              </div>
+              <div>
+                <strong>API</strong>
+                <span>OpenSearch 兼容代理</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="console-card">
+            <div class="console-bar">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <pre><code>Client
+  |
+  v
+oqbridge
+  |-- recent queries  ---> OpenSearch
+  |-- historical data ---> Quickwit
+
+oqbridge-migrate
+  |-- sliced scroll ---> OpenSearch
+  '-- gzip ingest  ---> Quickwit</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="overview" class="section intro reveal">
+        <div class="section-heading">
+          <p class="eyebrow">Project Overview</p>
+          <h2>一个桥，而不是另一个孤立系统</h2>
+        </div>
+
+        <div class="intro-grid">
+          <article class="panel">
+            <h3>解决的问题</h3>
+            <p>
+              许多团队希望把最近的活跃数据保留在 OpenSearch 里，以获得成熟的检索与生态支持，
+              但又不愿意为数月甚至数年的历史数据持续支付高昂存储成本。
+            </p>
+            <p>
+              oqbridge 的思路不是替换已有平台，而是在现有查询入口前增加一层足够轻、足够透明的桥接能力，
+              让冷热分层成为基础设施细节，而不是业务负担。
+            </p>
+          </article>
+
+          <article class="panel accent-panel">
+            <h3>设计原则</h3>
+            <ul class="check-list">
+              <li>保留 OpenSearch 兼容接口，降低改造成本</li>
+              <li>让冷数据迁移具备断点续传与多实例安全</li>
+              <li>用清晰的时间边界驱动路由，而不是复杂手工规则</li>
+              <li>把用户认证继续放在 OpenSearch，避免双份账号体系</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture" class="section reveal">
+        <div class="section-heading">
+          <p class="eyebrow">Architecture</p>
+          <h2>代理与迁移分离，读写路径各自清晰</h2>
+        </div>
+
+        <div class="architecture-grid">
+          <article class="diagram-card">
+            <div class="diagram-stage">
+              <div class="node client-node">Client / Dashboards</div>
+              <div class="node bridge-node">oqbridge</div>
+              <div class="node hot-node">OpenSearch<br><span>hot tier</span></div>
+              <div class="node cold-node">Quickwit<br><span>cold tier</span></div>
+              <div class="node migrate-node">oqbridge-migrate</div>
+            </div>
+          </article>
+
+          <article class="panel architecture-notes">
+            <div class="note-block">
+              <span class="note-tag">Proxy</span>
+              <h3>oqbridge</h3>
+              <p>负责接住 OpenSearch 风格的查询请求，基于时间范围判断应该命中热层、冷层或双路 fan-out，并在必要时合并搜索结果。</p>
+            </div>
+
+            <div class="note-block">
+              <span class="note-tag">Worker</span>
+              <h3>oqbridge-migrate</h3>
+              <p>部署在 OpenSearch 节点附近，本地读取历史数据，使用并行 sliced scroll 抽取并压缩写入 Quickwit，尽量缩短数据搬运链路。</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="features" class="section reveal">
+        <div class="section-heading">
+          <p class="eyebrow">Capabilities</p>
+          <h2>围绕真实运维场景设计的能力组合</h2>
+        </div>
+
+        <div class="feature-columns">
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-kicker">Query Proxy</span>
+              <h3>面向查询侧</h3>
+            </div>
+            <ul class="feature-list">
+              <li>透明反向代理，尽量保持 OpenSearch API 使用习惯</li>
+              <li>按时间范围智能路由到 OpenSearch、Quickwit 或双路并发</li>
+              <li>支持 `logs-*` 等通配符索引模式</li>
+              <li>跨冷热层时可合并 score 排序结果</li>
+              <li>支持按索引定制时间字段与冷热阈值</li>
+            </ul>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-kicker">Migration Worker</span>
+              <h3>面向迁移侧</h3>
+            </div>
+            <ul class="feature-list">
+              <li>自动解析通配符索引并过滤系统索引</li>
+              <li>迁移前自动创建 Quickwit 索引，减少前置准备</li>
+              <li>并行 sliced scroll 与 gzip 压缩提升迁移效率</li>
+              <li>支持 checkpoint / resume，迁移中断后可继续</li>
+              <li>通过分布式锁保证多实例场景下的安全协同</li>
+            </ul>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-top">
+              <span class="feature-kicker">Production Fit</span>
+              <h3>面向生产可用性</h3>
+            </div>
+            <ul class="feature-list">
+              <li>Quickwit 由服务账号访问，终端用户无感知</li>
+              <li>迁移指标写入 OpenSearch，便于制作监控看板</li>
+              <li>支持一次性任务与 cron 守护两种运行模式</li>
+              <li>冷数据可配置自动保留与自动删除</li>
+              <li>尽量让接入成本集中在配置，而不是改业务代码</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="lifecycle" class="section reveal">
+        <div class="section-heading">
+          <p class="eyebrow">Lifecycle</p>
+          <h2>从写入、迁移到删除，一条清楚的数据时间线</h2>
+        </div>
+
+        <div class="timeline">
+          <article class="timeline-card">
+            <span class="timeline-day">Day 0</span>
+            <h3>数据写入</h3>
+            <p>新数据进入 OpenSearch，保持最好的近线检索体验。</p>
+          </article>
+
+          <article class="timeline-card">
+            <span class="timeline-day">Day 25</span>
+            <h3>准备迁移</h3>
+            <p>`oqbridge-migrate` 开始处理接近冷却边界的数据，具体天数可调。</p>
+          </article>
+
+          <article class="timeline-card">
+            <span class="timeline-day">Day 30</span>
+            <h3>冷层接管</h3>
+            <p>历史数据已经可从 Quickwit 查询，必要时还可以从 OpenSearch 删除副本。</p>
+          </article>
+
+          <article class="timeline-card">
+            <span class="timeline-day">Day 395</span>
+            <h3>自动清理</h3>
+            <p>超过 `retention.cold_days` 的冷数据由 Quickwit 自动清除，降低长期堆积压力。</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section reveal">
+        <div class="section-heading">
+          <p class="eyebrow">Why It Matters</p>
+          <h2>对团队来说，最重要的是改造成本可控</h2>
+        </div>
+
+        <div class="value-grid">
+          <article class="value-card">
+            <h3>对开发者</h3>
+            <p>多数情况下继续对着 OpenSearch 兼容接口发请求，不需要让业务理解底层冷热层实现细节。</p>
+          </article>
+
+          <article class="value-card">
+            <h3>对平台团队</h3>
+            <p>把“存得下”和“查得快”拆开处理，让 OpenSearch 专注热数据，让 Quickwit 承担历史归档。</p>
+          </article>
+
+          <article class="value-card">
+            <h3>对运维</h3>
+            <p>迁移、断点恢复、分布式锁和指标采集都已经内建，减少一堆旁路脚本和人为流程。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="start" class="section reveal">
+        <div class="section-heading">
+          <p class="eyebrow">Quick Start</p>
+          <h2>保持简单，先跑起来，再慢慢调优</h2>
+        </div>
+
+        <div class="start-grid">
+          <article class="panel">
+            <h3>构建与运行</h3>
+            <pre><code>make build
+cp configs/oqbridge.yaml oqbridge.yaml
+
+./bin/oqbridge -config oqbridge.yaml
+./bin/oqbridge-migrate -config oqbridge.yaml --once</code></pre>
+          </article>
+
+          <article class="panel">
+            <h3>推荐部署方式</h3>
+            <ul class="check-list">
+              <li>在 OpenSearch 节点附近部署 `oqbridge-migrate`</li>
+              <li>在客户端容易访问的位置部署 `oqbridge`</li>
+              <li>共享一份配置格式，降低维护复杂度</li>
+              <li>先用默认 30 天 / 365 天策略，再按索引细化</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section cta-section reveal">
+        <div class="cta-card">
+          <p class="eyebrow">GitHub Pages Ready</p>
+          <h2>把这个目录直接发布成你的项目主页。</h2>
+          <p>
+            `pages` 目录是纯静态结构，不依赖任何构建工具。
+            仓库中已经附带了从 `pages` 目录部署到 GitHub Pages 的工作流，
+            推送到主分支后就可以把它作为项目主页对外展示。
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/leonunix/oqbridge" target="_blank" rel="noreferrer">打开 GitHub</a>
+            <a class="button button-secondary" href="https://github.com/leonunix/oqbridge/blob/main/README.md" target="_blank" rel="noreferrer">English README</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>oqbridge · A lightweight proxy for OpenSearch and Quickwit hot/cold tiering.</p>
+      <p>Built for GitHub Pages · <span id="year"></span></p>
+    </footer>
+  </div>
+
+  <script src="./script.js"></script>
+</body>
+</html>
